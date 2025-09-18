@@ -891,7 +891,6 @@ local function TryInit()
       allChk.text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
       allChk.text:SetPoint("LEFT", allChk, "RIGHT", 0, 1)
       allChk.text:SetText("All Maps")
-      allChk:SetChecked(true)
       allChk:SetScript("OnClick", function()
         Extras._listAll = allChk:GetChecked() and true or false
         Extras:RefreshEditorList()
