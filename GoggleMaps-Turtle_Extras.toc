@@ -1,0 +1,10 @@
+## Interface: 11200
+## Title: |cff4285f4G|cffea4335o|cfffbbc05g|cff4285f4g|cff34a853l|cffea4335e|cffffffffMaps |cffabd473TurtleExtras
+## Notes: Companion addon with editor, helpers, and QoL
+## Author: OrionAF
+## Version: 1.0.0
+## LoadOnDemand: 0
+## Dependencies: GoggleMaps, GoggleMaps-Turtle
+
+Extras.lua
+data\Map.Hotspots.lua
