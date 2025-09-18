@@ -17,7 +17,7 @@ References (read-only):
 ## Repo expectations (keep it lean)
 - `GoggleMaps-Turtle_Extras.toc` — manifest
 - `Extras.lua` — main file
-- `data/Map.Hotspots.lua` — optional shims for 1.12/Lua 5.0
+- `data/Map.Hotspots.lua` — Hotspot overrides for selecting zones.
 
 If a file doesn’t exist, don’t create architecture for its own sake. Ask or stub.
 
