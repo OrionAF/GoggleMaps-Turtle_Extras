@@ -787,7 +787,7 @@ local function TryInit()
     if not devEnabled then return end
     if not self._listFrame then
       local frame = CreateFrame("Frame", "GMExtrasHSUI", UIParent)
-      frame:SetWidth(420); frame:SetHeight(360)
+      frame:SetWidth(500); frame:SetHeight(400)
       frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
       frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = { left = 3, right = 3, top = 5, bottom = 3 } })
       frame:SetBackdropColor(0, 0, 0, 0.85)
@@ -826,8 +826,8 @@ local function TryInit()
 
       -- Poly resolution slider
       local slider = CreateFrame("Slider", "GMExtrasPolyRes", frame, "OptionsSliderTemplate")
-      slider:SetPoint("BOTTOMLEFT", 12, 68); slider:SetWidth(200)
-      slider:SetMinMaxValues(0.5, 5.0); slider:SetValueStep(0.1)
+      slider:SetPoint("BOTTOMLEFT", 12, 70); slider:SetWidth(476)
+      slider:SetMinMaxValues(0.5, 10.0); slider:SetValueStep(0.1)
       if slider.SetObeyStepOnDrag then -- not available on 1.12 sliders
         slider:SetObeyStepOnDrag(true)
       end
@@ -835,7 +835,7 @@ local function TryInit()
       local sName = slider:GetName()
       if _G[sName .. "Text"] then _G[sName .. "Text"]:SetText("PolyRes") end
       if _G[sName .. "Low"] then _G[sName .. "Low"]:SetText("0.5") end
-      if _G[sName .. "High"] then _G[sName .. "High"]:SetText("5.0") end
+      if _G[sName .. "High"] then _G[sName .. "High"]:SetText("10.0") end
       slider:SetScript("OnValueChanged", function()
         local v = this and this.GetValue and this:GetValue() or (slider.GetValue and slider:GetValue())
         if not v then return end
@@ -843,64 +843,69 @@ local function TryInit()
         Extras:Print(string.format("Polygon resolution: %.1f", v))
       end)
 
+      local combineBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      combineBtn:SetWidth(80); combineBtn:SetHeight(22)
+      combineBtn:ClearAllPoints(); combineBtn:SetPoint("BOTTOMLEFT", export, "TOPLEFT", 0, 6)
+      combineBtn:SetText("Combine")
+      combineBtn:SetScript("OnClick", function() Extras:CombineCurrentSession() end)
+
+      local undoBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      undoBtn:SetWidth(60); undoBtn:SetHeight(22)
+      undoBtn:ClearAllPoints(); undoBtn:SetPoint("LEFT", combineBtn, "RIGHT", 6, 0)
+      undoBtn:SetText("Undo")
+      undoBtn:SetScript("OnClick", function() Extras:UndoLastDraw() end)
+
+      local editBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      editBtn:SetWidth(60); editBtn:SetHeight(22)
+      editBtn:ClearAllPoints(); editBtn:SetPoint("LEFT", undoBtn, "RIGHT", 6, 0)
+      editBtn:SetText("Edit")
+      editBtn:SetScript("OnClick", function()
+        GM.ExtrasDB.editor.enabled = not GM.ExtrasDB.editor.enabled
+        if editBtn.SetText then
+          editBtn:SetText(GM.ExtrasDB.editor.enabled and "Edit: On" or "Edit: Off")
+        end
+        Extras:SetEditorEnabled(GM.ExtrasDB.editor.enabled)
+        Extras:Print("Hotspot editor: " .. (GM.ExtrasDB.editor.enabled and "ON" or "OFF"))
+      end)
+
+      local hsOff = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      hsOff:SetWidth(70); hsOff:SetHeight(22)
+      hsOff:ClearAllPoints(); hsOff:SetPoint("LEFT", editBtn, "RIGHT", 6, 0)
+      hsOff:SetText("HS: Off")
+      hsOff:SetScript("OnClick", function()
+        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
+      end)
+
+      -- Hotspot overlay buttons (Extras only)
+      local hsAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      hsAll:SetWidth(70); hsAll:SetHeight(22)
+      hsAll:ClearAllPoints(); hsAll:SetPoint("LEFT", hsOff, "RIGHT", 6, 0)
+      hsAll:SetText("HS: All")
+      hsAll:SetScript("OnClick", function()
+        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
+      end)
+
       -- All maps toggle
       local allChk = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-      allChk:SetPoint("BOTTOMRIGHT", -14, 40)
+      allChk:SetPoint("LEFT", clear, "RIGHT", 5, 0)
       allChk.text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
       allChk.text:SetPoint("LEFT", allChk, "RIGHT", 0, 1)
       allChk.text:SetText("All Maps")
+      allChk:SetChecked(true)
       allChk:SetScript("OnClick", function()
         Extras._listAll = allChk:GetChecked() and true or false
         Extras:RefreshEditorList()
       end)
       frame.allChk = allChk
 
-      -- Hotspot overlay buttons (Extras only)
-      local hsAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      hsAll:SetWidth(70); hsAll:SetHeight(22)
-      hsAll:ClearAllPoints(); hsAll:SetPoint("RIGHT", allChk, "LEFT", -12, 0)
-      hsAll:SetText("HS: All")
-      hsAll:SetScript("OnClick", function()
-        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
-      end)
-
-      local hsOff = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      hsOff:SetWidth(70); hsOff:SetHeight(22)
-      hsOff:ClearAllPoints(); hsOff:SetPoint("RIGHT", hsAll, "LEFT", -6, 0)
-      hsOff:SetText("HS: Off")
-      hsOff:SetScript("OnClick", function()
-        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
-      end)
-
-      local editBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      editBtn:SetWidth(60); editBtn:SetHeight(22)
-      editBtn:ClearAllPoints(); editBtn:SetPoint("RIGHT", hsOff, "LEFT", -6, 0)
-      editBtn:SetText("Edit")
-      editBtn:SetScript("OnClick", function()
-        GM.ExtrasDB.editor.enabled = not GM.ExtrasDB.editor.enabled
-        Extras:SetEditorEnabled(GM.ExtrasDB.editor.enabled)
-        Extras:Print("Hotspot editor: " .. (GM.ExtrasDB.editor.enabled and "ON" or "OFF"))
-      end)
-
-      local undoBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      undoBtn:SetWidth(60); undoBtn:SetHeight(22)
-      undoBtn:ClearAllPoints(); undoBtn:SetPoint("RIGHT", editBtn, "LEFT", -6, 0)
-      undoBtn:SetText("Undo")
-      undoBtn:SetScript("OnClick", function() Extras:UndoLastDraw() end)
-
-      local combineBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      combineBtn:SetWidth(80); combineBtn:SetHeight(22)
-      combineBtn:ClearAllPoints(); combineBtn:SetPoint("RIGHT", undoBtn, "LEFT", -6, 0)
-      combineBtn:SetText("Combine")
-      combineBtn:SetScript("OnClick", function() Extras:CombineCurrentSession() end)
 
       -- Scroll area
       local listBG = frame:CreateTexture(nil, "BACKGROUND")
-      listBG:SetPoint("TOPLEFT", 10, -30); listBG:SetPoint("BOTTOMRIGHT", -10, 96)
+      listBG:SetPoint("TOPLEFT", 10, -30); listBG:SetPoint("BOTTOMRIGHT", -10, 100)
       listBG:SetTexture(0.1, 0.1, 0.1, 0.6)
 
       local scroll = CreateFrame("ScrollFrame", "GMExtrasHSUIScroll", frame, "UIPanelScrollFrameTemplate")
-      scroll:SetPoint("TOPLEFT", 12, -32); scroll:SetPoint("BOTTOMRIGHT", -30, 98)
+      scroll:SetPoint("TOPLEFT", 12, -30); scroll:SetPoint("BOTTOMRIGHT", -30, 100)
       local content = CreateFrame("Frame", nil, scroll)
       content:SetWidth(360); content:SetHeight(300)
       scroll:SetScrollChild(content)
@@ -995,7 +1000,7 @@ local function TryInit()
     end
 
     -- Fill rows
-    local rowWidth = 330
+    local rowWidth = 430
     if frame.scroll and frame.scroll.GetWidth then
       local w = frame.scroll:GetWidth()
       if w and w > 0 then rowWidth = math.max(120, w - 30) end
@@ -1016,7 +1021,13 @@ local function TryInit()
         if it then
           if it.type == "header" then
             local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
-            row.text:SetText(string.format("%s (%d)", mapName, it.mapId))
+            local headerStr = string.format("%s (%d)", mapName, it.mapId)
+            local headerLen = string.len(headerStr)
+            local dashCount = math.floor((59 - headerLen) / 2)
+            local fillerDashes = string.rep("-", dashCount)
+            local startDashes = string.rep("-", 59)
+            local endDashes = string.rep("-", 59)
+            row.text:SetText(startDashes .. fillerDashes .. headerStr .. fillerDashes .. endDashes)
             row.delete:Hide()
           else
             local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
