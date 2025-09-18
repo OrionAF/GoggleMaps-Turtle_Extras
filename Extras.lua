@@ -45,6 +45,12 @@ local function TryInit()
     return cx - l, t - cy
   end
 
+  local function nearlyEqual(a, b)
+    if a == b then return true end
+    if not a or not b then return false end
+    return math.abs(a - b) < 0.0001
+  end
+
   -- Utility: throttle any target method by Hz and/or a state key
   -- changedFn(target) should return a string key representing state; if nil, only time is used
   function Extras:WrapThrottle(target, methodName, hz, changedFn)
@@ -197,6 +203,7 @@ local function TryInit()
         msg("- /gmaps drawzone <id|name|off>: Force draw target zone")
         msg("- /gmaps mode <rect|poly>: Drawing mode")
         msg("- /gmaps polyres <step>: Polygon fill resolution (default 1.0)")
+        msg("- /gmaps combine [all|mapId]: Merge touching session hotspots")
       end
       return true
     end
@@ -278,6 +285,23 @@ local function TryInit()
       else
         msg("Polygon resolution must be >0.1 and <=10")
       end
+      return true
+    elseif cmd == "combine" or cmd == "merge" then
+      local scope = arg1 and string.lower(arg1) or nil
+      local mapId
+      if scope == "all" then
+        mapId = nil
+      elseif scope and scope ~= "" then
+        mapId = tonumber(scope)
+      end
+      if not mapId and scope ~= "all" then
+        mapId = Extras:GetSelectedMapId() or (GM.Map and (GM.Map.realMapId or GM.Map.mapId))
+      end
+      if not mapId and scope ~= "all" then
+        msg("Combine: no map selected.")
+        return true
+      end
+      Extras:CombineSessionHotspots(mapId)
       return true
     elseif cmd == "dbg" or cmd == "debug" then
       local mode = arg1 and string.lower(arg1) or "toggle"
@@ -846,6 +870,12 @@ local function TryInit()
       undoBtn:SetText("Undo")
       undoBtn:SetScript("OnClick", function() Extras:UndoLastDraw() end)
 
+      local combineBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      combineBtn:SetWidth(80); combineBtn:SetHeight(22)
+      combineBtn:ClearAllPoints(); combineBtn:SetPoint("RIGHT", undoBtn, "LEFT", -6, 0)
+      combineBtn:SetText("Combine")
+      combineBtn:SetScript("OnClick", function() Extras:CombineCurrentSession() end)
+
       -- Scroll area
       local listBG = frame:CreateTexture(nil, "BACKGROUND")
       listBG:SetPoint("TOPLEFT", 10, -30); listBG:SetPoint("BOTTOMRIGHT", -10, 96)
@@ -968,6 +998,202 @@ local function TryInit()
       end
     end
     self:LoadFileHotspots(); self:RebuildSessionSpots(); self:DrawOverlays(); self:RefreshEditorList()
+  end
+
+  function Extras:_CombineAxisAlignedRects(rects)
+    local EPS = 0.0001
+    local SCALE = 10000
+    local function key(v)
+      return tostring(math.floor(v * SCALE + 0.5))
+    end
+    local function addUnique(list, value)
+      if not value then return end
+      for i = 1, table.getn(list) do
+        if math.abs(list[i] - value) < EPS then return end
+      end
+      table.insert(list, value)
+    end
+    local valid = {}
+    for i = 1, table.getn(rects or {}) do
+      local r = rects[i]
+      if r then
+        local w = r.w or 0
+        local h = r.h or 0
+        if w > EPS and h > EPS then
+          local x = r.x or 0
+          local y = r.y or 0
+          table.insert(valid, { x = x, y = y, w = w, h = h, name = r.name })
+        end
+      end
+    end
+    if table.getn(valid) == 0 then return {} end
+    local xs, ys = {}, {}
+    for i = 1, table.getn(valid) do
+      local r = valid[i]
+      addUnique(xs, r.x)
+      addUnique(xs, r.x + r.w)
+      addUnique(ys, r.y)
+      addUnique(ys, r.y + r.h)
+    end
+    if table.getn(xs) < 2 or table.getn(ys) < 2 then
+      local copy = {}
+      for i = 1, table.getn(valid) do
+        local r = valid[i]
+        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
+      end
+      return copy
+    end
+    table.sort(xs)
+    table.sort(ys)
+    local xIndex, yIndex = {}, {}
+    for i = 1, table.getn(xs) do xIndex[key(xs[i])] = i end
+    for i = 1, table.getn(ys) do yIndex[key(ys[i])] = i end
+    local filled = {}
+    for i = 1, table.getn(valid) do
+      local r = valid[i]
+      local x1 = r.x
+      local x2 = r.x + r.w
+      local y1 = r.y
+      local y2 = r.y + r.h
+      local ix1 = xIndex[key(x1)]
+      local ix2 = xIndex[key(x2)]
+      local iy1 = yIndex[key(y1)]
+      local iy2 = yIndex[key(y2)]
+      if ix1 and ix2 and iy1 and iy2 then
+        for iy = iy1, iy2 - 1 do
+          local row = filled[iy]
+          if not row then row = {}; filled[iy] = row end
+          for ix = ix1, ix2 - 1 do
+            row[ix] = true
+          end
+        end
+      end
+    end
+    local merged = {}
+    local prev = {}
+    local xCount = table.getn(xs)
+    local yCount = table.getn(ys)
+    for iy = 1, yCount - 1 do
+      local row = filled[iy] or {}
+      local current = {}
+      local ix = 1
+      while ix <= xCount - 1 do
+        if row[ix] then
+          local start = ix
+          while ix <= xCount - 1 and row[ix] do ix = ix + 1 end
+          local x1 = xs[start]
+          local x2 = xs[ix]
+          local y1 = ys[iy]
+          local y2 = ys[iy + 1]
+          local spanKey = key(x1) .. ":" .. key(x2)
+          local rect = prev[spanKey]
+          if rect and math.abs(rect.y2 - y1) < EPS then
+            rect.y2 = y2
+            current[spanKey] = rect
+          else
+            local newRect = { x1 = x1, y1 = y1, x2 = x2, y2 = y2 }
+            table.insert(merged, newRect)
+            current[spanKey] = newRect
+          end
+        else
+          ix = ix + 1
+        end
+      end
+      prev = current
+    end
+    local final = {}
+    for i = 1, table.getn(merged) do
+      local m = merged[i]
+      local w = m.x2 - m.x1
+      local h = m.y2 - m.y1
+      if w > EPS and h > EPS then
+        local rect = { x = m.x1, y = m.y1, w = w, h = h, name = "CUSTOM" }
+        for j = 1, table.getn(valid) do
+          local src = valid[j]
+          local sx1 = src.x
+          local sy1 = src.y
+          local sx2 = src.x + src.w
+          local sy2 = src.y + src.h
+          if sx1 <= m.x1 + EPS and sx2 >= m.x2 - EPS and sy1 <= m.y1 + EPS and sy2 >= m.y2 - EPS then
+            if src.name then rect.name = src.name end
+            break
+          end
+        end
+        table.insert(final, rect)
+      end
+    end
+    return final
+  end
+
+  function Extras:CombineSessionHotspots(mapId)
+    local targets = {}
+    if mapId ~= nil then
+      table.insert(targets, mapId)
+    else
+      for mid, list in pairs(self.sessionEdits) do
+        if list and table.getn(list) > 0 then table.insert(targets, mid) end
+      end
+    end
+    if table.getn(targets) == 0 then
+      self:Print("No session hotspots to combine.")
+      return false
+    end
+    local changed = {}
+    local totalBefore, totalAfter = 0, 0
+    for i = 1, table.getn(targets) do
+      local mid = targets[i]
+      local list = self.sessionEdits[mid]
+      local count = list and table.getn(list) or 0
+      if count > 0 then
+        local combined = self:_CombineAxisAlignedRects(list)
+        local after = table.getn(combined)
+        local different = false
+        if after > 0 and after < count then
+          different = true
+        elseif after == count then
+          for j = 1, after do
+            local a = list[j]
+            local b = combined[j]
+            if not (a and b and nearlyEqual(a.x, b.x) and nearlyEqual(a.y, b.y) and nearlyEqual(a.w, b.w) and nearlyEqual(a.h, b.h)) then
+              different = true
+              break
+            end
+          end
+        end
+        if different then
+          self.sessionEdits[mid] = combined
+          totalBefore = totalBefore + count
+          totalAfter = totalAfter + after
+          table.insert(changed, { mapId = mid, before = count, after = after })
+        end
+      end
+    end
+    if table.getn(changed) > 0 then
+      self:LoadFileHotspots(); self:RebuildSessionSpots(); self:DrawOverlays(); self:RefreshEditorList()
+      if table.getn(changed) == 1 then
+        local info = changed[1]
+        local name = (GM.Map.Area[info.mapId] and GM.Map.Area[info.mapId].name) or tostring(info.mapId)
+        self:Print(string.format("Combined session hotspots for %s: %d -> %d", name, info.before, info.after))
+      else
+        self:Print(string.format("Combined session hotspots across %d maps: %d -> %d", table.getn(changed), totalBefore, totalAfter))
+      end
+      return true
+    end
+    self:Print("No combinable session hotspots found.")
+    return false
+  end
+
+  function Extras:CombineCurrentSession()
+    if self._listAll then
+      self:CombineSessionHotspots(nil)
+    else
+      local mid = self:GetSelectedMapId() or (GM.Map and GM.Map.realMapId)
+      if mid then
+        self:CombineSessionHotspots(mid)
+      else
+        self:Print("Combine: no map selected.")
+      end
+    end
   end
 
   -- Editor enable/disable
