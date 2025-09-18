@@ -792,6 +792,7 @@ local function TryInit()
       frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = { left = 3, right = 3, top = 5, bottom = 3 } })
       frame:SetBackdropColor(0, 0, 0, 0.85)
       frame:EnableMouse(true); frame:SetMovable(true)
+    	frame:SetClampedToScreen(true)
       frame:RegisterForDrag("LeftButton"); frame:SetScript("OnDragStart", function() frame:StartMoving() end)
       frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
 
