@@ -909,32 +909,56 @@ local function TryInit()
       self._listFrame = frame
       self._rows = {}
       self._rowHeight = 18
-      for i = 1, 100 do
-        local row = CreateFrame("Frame", nil, content)
-        row:SetHeight(self._rowHeight)
-        if i == 1 then row:SetPoint("TOPLEFT", 4, -4) else row:SetPoint("TOPLEFT", self._rows[i-1], "BOTTOMLEFT", 0, -2) end
-        row:SetWidth(330)
-
-        local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        txt:SetPoint("LEFT", 2, 0); txt:SetJustifyH("LEFT"); txt:SetWidth(300)
-        row.text = txt
-
-        local del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        del:SetPoint("RIGHT", -2, 0); del:SetWidth(20); del:SetHeight(16); del:SetText("X")
-        del:SetScript("OnClick", function()
-          local it = row.item
-          if it and it.source == "session" and Extras.sessionEdits[it.mapId] and Extras.sessionEdits[it.mapId][it.index] then
-            table.remove(Extras.sessionEdits[it.mapId], it.index)
-            Extras:LoadFileHotspots(); Extras:RebuildSessionSpots(); Extras:DrawOverlays(); Extras:RefreshEditorList()
-          end
-        end)
-        row.delete = del
-
-      self._rows[i] = row
-      end
     end
     self:RefreshEditorList()
     self._listFrame:Show()
+  end
+
+  function Extras:_EnsureEditorRow(index)
+    if not index or index < 1 then return nil end
+    if not self._listFrame or not self._listFrame.content then return nil end
+    self._rows = self._rows or {}
+    if self._rows[index] then return self._rows[index] end
+
+    if index > 1 and not self._rows[index - 1] then
+      self:_EnsureEditorRow(index - 1)
+    end
+
+    local row = CreateFrame("Frame", nil, self._listFrame.content)
+    row:SetHeight(self._rowHeight or 18)
+    if index == 1 then
+      row:SetPoint("TOPLEFT", 4, -4)
+    else
+      row:SetPoint("TOPLEFT", self._rows[index - 1], "BOTTOMLEFT", 0, -2)
+    end
+
+    local rowWidth = 330
+    if self._listFrame.scroll and self._listFrame.scroll.GetWidth then
+      local w = self._listFrame.scroll:GetWidth()
+      if w and w > 0 then rowWidth = math.max(120, w - 30) end
+    end
+    row:SetWidth(rowWidth)
+
+    local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    txt:SetPoint("LEFT", 2, 0); txt:SetJustifyH("LEFT")
+    local textWidth = rowWidth - 30
+    if textWidth < 80 then textWidth = math.max(40, rowWidth * 0.7) end
+    txt:SetWidth(textWidth)
+    row.text = txt
+
+    local del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    del:SetPoint("RIGHT", -2, 0); del:SetWidth(20); del:SetHeight(16); del:SetText("X")
+    del:SetScript("OnClick", function()
+      local it = row.item
+      if it and it.source == "session" and Extras.sessionEdits[it.mapId] and Extras.sessionEdits[it.mapId][it.index] then
+        table.remove(Extras.sessionEdits[it.mapId], it.index)
+        Extras:LoadFileHotspots(); Extras:RebuildSessionSpots(); Extras:DrawOverlays(); Extras:RefreshEditorList()
+      end
+    end)
+    row.delete = del
+
+    self._rows[index] = row
+    return row
   end
 
   function Extras:RefreshEditorList()
@@ -971,23 +995,46 @@ local function TryInit()
     end
 
     -- Fill rows
-    for i = 1, table.getn(self._rows) do
-      local row = self._rows[i]
+    local rowWidth = 330
+    if frame.scroll and frame.scroll.GetWidth then
+      local w = frame.scroll:GetWidth()
+      if w and w > 0 then rowWidth = math.max(120, w - 30) end
+    end
+
+    local maxRow = table.getn(items)
+    for i = 1, maxRow do
+      local row = self._rows[i] or self:_EnsureEditorRow(i)
       local it = items[i]
-      row.item = it
-      if it then
-        if it.type == "header" then
-          local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
-          row.text:SetText(string.format("%s (%d)", mapName, it.mapId))
-          row.delete:Hide()
-        else
-          local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
-          row.text:SetText(string.format("[%d][%s] %.2f^%.2f^%.2f^%.2f^%s", it.mapId, it.source, it.x, it.y, it.w, it.h, it.name or "CUSTOM"))
-          row.delete:Show()
-          if it.source == "session" then row.delete:Enable() else row.delete:Disable() end
+      if row then
+        row:SetWidth(rowWidth)
+        if row.text then
+          local textWidth = rowWidth - 30
+          if textWidth < 80 then textWidth = math.max(40, rowWidth * 0.7) end
+          row.text:SetWidth(textWidth)
         end
-        row:Show()
-      else
+        row.item = it
+        if it then
+          if it.type == "header" then
+            local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
+            row.text:SetText(string.format("%s (%d)", mapName, it.mapId))
+            row.delete:Hide()
+          else
+            local mapName = (GM.Map.Area[it.mapId] and GM.Map.Area[it.mapId].name) or tostring(it.mapId)
+            row.text:SetText(string.format("[%d][%s] %.2f^%.2f^%.2f^%.2f^%s", it.mapId, it.source, it.x, it.y, it.w, it.h, it.name or "CUSTOM"))
+            row.delete:Show()
+            if it.source == "session" then row.delete:Enable() else row.delete:Disable() end
+          end
+          row:Show()
+        else
+          row:Hide()
+        end
+      end
+    end
+
+    for i = maxRow + 1, table.getn(self._rows) do
+      local row = self._rows[i]
+      if row then
+        row.item = nil
         row:Hide()
       end
     end
