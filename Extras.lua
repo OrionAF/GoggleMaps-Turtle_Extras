@@ -815,7 +815,9 @@ local function TryInit()
       local slider = CreateFrame("Slider", "GMExtrasPolyRes", frame, "OptionsSliderTemplate")
       slider:SetPoint("BOTTOMLEFT", 12, 40); slider:SetWidth(200)
       slider:SetMinMaxValues(0.5, 5.0); slider:SetValueStep(0.1)
-      slider:SetObeyStepOnDrag(true)
+      if slider.SetObeyStepOnDrag then -- not available on 1.12 sliders
+        slider:SetObeyStepOnDrag(true)
+      end
       slider:SetValue(Extras._polyRes or 1.0)
       local sName = slider:GetName()
       if _G[sName .. "Text"] then _G[sName .. "Text"]:SetText("PolyRes") end
