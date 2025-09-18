@@ -782,38 +782,9 @@ local function TryInit()
         Extras:ClearCurrentSession()
       end)
 
-      -- Hotspot overlay buttons (Extras only)
-      local hsAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      hsAll:SetPoint("BOTTOMRIGHT", -12, 12); hsAll:SetWidth(70); hsAll:SetHeight(22)
-      hsAll:SetText("HS: All")
-      hsAll:SetScript("OnClick", function()
-        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
-      end)
-
-      local hsOff = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      hsOff:SetPoint("RIGHT", hsAll, "LEFT", -6, 0); hsOff:SetWidth(70); hsOff:SetHeight(22)
-      hsOff:SetText("HS: Off")
-      hsOff:SetScript("OnClick", function()
-        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
-      end)
-
-      local editBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      editBtn:SetPoint("RIGHT", hsOff, "LEFT", -6, 0); editBtn:SetWidth(60); editBtn:SetHeight(22)
-      editBtn:SetText("Edit")
-      editBtn:SetScript("OnClick", function()
-        GM.ExtrasDB.editor.enabled = not GM.ExtrasDB.editor.enabled
-        Extras:SetEditorEnabled(GM.ExtrasDB.editor.enabled)
-        Extras:Print("Hotspot editor: " .. (GM.ExtrasDB.editor.enabled and "ON" or "OFF"))
-      end)
-
-      local undoBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      undoBtn:SetPoint("RIGHT", editBtn, "LEFT", -6, 0); undoBtn:SetWidth(60); undoBtn:SetHeight(22)
-      undoBtn:SetText("Undo")
-      undoBtn:SetScript("OnClick", function() Extras:UndoLastDraw() end)
-
       -- Poly resolution slider
       local slider = CreateFrame("Slider", "GMExtrasPolyRes", frame, "OptionsSliderTemplate")
-      slider:SetPoint("BOTTOMLEFT", 12, 40); slider:SetWidth(200)
+      slider:SetPoint("BOTTOMLEFT", 12, 68); slider:SetWidth(200)
       slider:SetMinMaxValues(0.5, 5.0); slider:SetValueStep(0.1)
       if slider.SetObeyStepOnDrag then -- not available on 1.12 sliders
         slider:SetObeyStepOnDrag(true)
@@ -832,7 +803,7 @@ local function TryInit()
 
       -- All maps toggle
       local allChk = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-      allChk:SetPoint("BOTTOMRIGHT", -14, 10)
+      allChk:SetPoint("BOTTOMRIGHT", -14, 40)
       allChk.text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
       allChk.text:SetPoint("LEFT", allChk, "RIGHT", 0, 1)
       allChk.text:SetText("All Maps")
@@ -842,13 +813,46 @@ local function TryInit()
       end)
       frame.allChk = allChk
 
+      -- Hotspot overlay buttons (Extras only)
+      local hsAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      hsAll:SetWidth(70); hsAll:SetHeight(22)
+      hsAll:ClearAllPoints(); hsAll:SetPoint("RIGHT", allChk, "LEFT", -12, 0)
+      hsAll:SetText("HS: All")
+      hsAll:SetScript("OnClick", function()
+        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
+      end)
+
+      local hsOff = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      hsOff:SetWidth(70); hsOff:SetHeight(22)
+      hsOff:ClearAllPoints(); hsOff:SetPoint("RIGHT", hsAll, "LEFT", -6, 0)
+      hsOff:SetText("HS: Off")
+      hsOff:SetScript("OnClick", function()
+        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
+      end)
+
+      local editBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      editBtn:SetWidth(60); editBtn:SetHeight(22)
+      editBtn:ClearAllPoints(); editBtn:SetPoint("RIGHT", hsOff, "LEFT", -6, 0)
+      editBtn:SetText("Edit")
+      editBtn:SetScript("OnClick", function()
+        GM.ExtrasDB.editor.enabled = not GM.ExtrasDB.editor.enabled
+        Extras:SetEditorEnabled(GM.ExtrasDB.editor.enabled)
+        Extras:Print("Hotspot editor: " .. (GM.ExtrasDB.editor.enabled and "ON" or "OFF"))
+      end)
+
+      local undoBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      undoBtn:SetWidth(60); undoBtn:SetHeight(22)
+      undoBtn:ClearAllPoints(); undoBtn:SetPoint("RIGHT", editBtn, "LEFT", -6, 0)
+      undoBtn:SetText("Undo")
+      undoBtn:SetScript("OnClick", function() Extras:UndoLastDraw() end)
+
       -- Scroll area
       local listBG = frame:CreateTexture(nil, "BACKGROUND")
-      listBG:SetPoint("TOPLEFT", 10, -30); listBG:SetPoint("BOTTOMRIGHT", -10, 44)
+      listBG:SetPoint("TOPLEFT", 10, -30); listBG:SetPoint("BOTTOMRIGHT", -10, 96)
       listBG:SetTexture(0.1, 0.1, 0.1, 0.6)
 
       local scroll = CreateFrame("ScrollFrame", "GMExtrasHSUIScroll", frame, "UIPanelScrollFrameTemplate")
-      scroll:SetPoint("TOPLEFT", 12, -32); scroll:SetPoint("BOTTOMRIGHT", -30, 46)
+      scroll:SetPoint("TOPLEFT", 12, -32); scroll:SetPoint("BOTTOMRIGHT", -30, 98)
       local content = CreateFrame("Frame", nil, scroll)
       content:SetWidth(360); content:SetHeight(300)
       scroll:SetScrollChild(content)
