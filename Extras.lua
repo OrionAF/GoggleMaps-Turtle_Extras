@@ -85,11 +85,25 @@ local function TryInit()
   function Extras:IsClickQuery() return self.state.clickQuery or self._clickQuery end
   function Extras:SetClickQuery(v) self.state.clickQuery = v and true or false; self._clickQuery = self.state.clickQuery end
 
-  function Extras:SelectZone(mapId, reason)
+  function Extras:SelectZone(mapId, reason, opts)
     if not mapId then return end
+    local suppress = opts and opts.suppressOverlay
+    local mapFrame, overlayFrame, wasMapVisible, wasOverlayVisible
+    if suppress then
+      mapFrame = GM.frame
+      overlayFrame = GM.Overlay and GM.Overlay.frame
+      wasMapVisible = mapFrame and mapFrame:IsVisible()
+      wasOverlayVisible = overlayFrame and overlayFrame:IsVisible()
+    end
     local Map = GM.Map
     local current = self:GetSelectedMapId() or (Map and Map.mapId)
-    if current and mapId == current then return end
+    if current and mapId == current then
+      if suppress then
+        if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
+        if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
+      end
+      return
+    end
     self:SetSelectedMapId(mapId)
     if Map then Map.mapId = mapId end
     -- Allow map API calls during our own selection change
@@ -103,6 +117,10 @@ local function TryInit()
     end
     if _G.pfMap and _G.pfMap.UpdateNodes then
       _G.pfMap:UpdateNodes()
+    end
+    if suppress then
+      if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
+      if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
     end
   end
 
@@ -263,7 +281,7 @@ local function TryInit()
         Extras._forceDrawMapId = mapId
         if GM.ExtrasDB and GM.ExtrasDB.editor then GM.ExtrasDB.editor.forceMapId = mapId end
         msg(string.format("Draw zone: %s (%d)", GM.Map.Area[mapId].name or "?", mapId))
-        Extras:SelectZone(mapId, "Extras drawzone")
+        Extras:SelectZone(mapId, "Extras drawzone", { suppressOverlay = true })
       else
         msg("Draw zone: invalid mapId or name")
       end
