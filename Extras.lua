@@ -1243,275 +1243,358 @@ local function TryInit()
 
     local xCells = table.getn(xs) - 1
     local yCells = table.getn(ys) - 1
-
-    local function mergeAdjacency(list)
-      local changed = true
-      while changed do
-        changed = false
-        local i = 1
-        while i <= table.getn(list) do
-          local a = list[i]
-          local j = i + 1
-          while j <= table.getn(list) do
-            local b = list[j]
-            local ax1 = a.x
-            local ax2 = a.x + a.w
-            local ay1 = a.y
-            local ay2 = a.y + a.h
-            local bx1 = b.x
-            local bx2 = b.x + b.w
-            local by1 = b.y
-            local by2 = b.y + b.h
-            local merged = false
-            if math.abs(ay1 - by1) <= EPS and math.abs(ay2 - by2) <= EPS then
-              if math.abs(ax2 - bx1) <= EPS then
-                a.w = bx2 - ax1
-                if not a.name or a.name == "" then a.name = b.name end
-                table.remove(list, j)
-                changed = true
-                merged = true
-              elseif math.abs(bx2 - ax1) <= EPS then
-                a.w = ax2 - bx1
-                a.x = bx1
-                if not a.name or a.name == "" then a.name = b.name end
-                table.remove(list, j)
-                changed = true
-                merged = true
-              end
-            elseif math.abs(ax1 - bx1) <= EPS and math.abs(ax2 - bx2) <= EPS then
-              if math.abs(ay2 - by1) <= EPS then
-                a.h = by2 - ay1
-                if not a.name or a.name == "" then a.name = b.name end
-                table.remove(list, j)
-                changed = true
-                merged = true
-              elseif math.abs(by2 - ay1) <= EPS then
-                a.h = ay2 - by1
-                a.y = by1
-                if not a.name or a.name == "" then a.name = b.name end
-                table.remove(list, j)
-                changed = true
-                merged = true
-              end
-            end
-            if merged then
-              break
-            else
-              j = j + 1
-            end
-          end
-          i = i + 1
-        end
-      end
-      return list
-    end
-
-    local function buildSpanRects()
-      local merged = {}
-      local prev = {}
-      for yIndex = 1, yCells do
-        local row = filled[yIndex]
-        local current = {}
-        local xIndex = 1
-        while xIndex <= xCells do
-          if row and row[xIndex] then
-            local start = xIndex
-            while xIndex <= xCells and row[xIndex] do
-              xIndex = xIndex + 1
-            end
-            local spanKey = tostring(start) .. ":" .. tostring(xIndex)
-            local existing = prev[spanKey]
-            if existing then
-              existing.y2Index = yIndex + 1
-              current[spanKey] = existing
-            else
-              local rect = {
-                x1Index = start,
-                x2Index = xIndex,
-                y1Index = yIndex,
-                y2Index = yIndex + 1
-              }
-              table.insert(merged, rect)
-              current[spanKey] = rect
-            end
-          else
-            xIndex = xIndex + 1
-          end
-        end
-        prev = current
-      end
-
-      local out = {}
-      for i = 1, table.getn(merged) do
-        local r = merged[i]
-        local x1 = xs[r.x1Index]
-        local x2 = xs[r.x2Index]
-        local y1 = ys[r.y1Index]
-        local y2 = ys[r.y2Index]
-        if x1 and x2 and y1 and y2 then
-          if (x2 - x1) > EPS and (y2 - y1) > EPS then
-            table.insert(out, {
-              x = x1,
-              y = y1,
-              w = x2 - x1,
-              h = y2 - y1,
-              name = pickName(x1, y1, x2, y2)
-            })
-          end
-        end
-      end
-      return out
-    end
-
-    local function buildGreedyRects()
-      local used = {}
-      local totalCells = 0
-      for yIndex = 1, yCells do
-        local row = filled[yIndex]
-        if row then
-          for xIndex = 1, xCells do
-            if row[xIndex] then
-              totalCells = totalCells + 1
-            end
-          end
-        end
-      end
-      if totalCells == 0 then return {} end
-
-      local remaining = totalCells
-      local rects = {}
-      local safety = 0
-      while remaining > 0 do
-        safety = safety + 1
-        if safety > totalCells * 2 then break end
-        local bestX, bestY, bestWidth, bestHeight = nil, nil, 0, 0
-        local bestArea = 0
-        for yIndex = 1, yCells do
-          local row = filled[yIndex]
-          if row then
-            local usedRow = used[yIndex]
-            local xIndex = 1
-            while xIndex <= xCells do
-              local occupied = row[xIndex]
-              local already = usedRow and usedRow[xIndex]
-              if occupied and not already then
-                local width = 0
-                while (xIndex + width) <= xCells do
-                  local filledRow = row[xIndex + width]
-                  local usedRowVal = usedRow and usedRow[xIndex + width]
-                  if not filledRow or usedRowVal then break end
-                  width = width + 1
-                end
-                local minWidth = width
-                local height = 1
-                local area = minWidth * height
-                if minWidth > 0 then
-                  if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
-                    bestX, bestY = xIndex, yIndex
-                    bestWidth, bestHeight = minWidth, height
-                    bestArea = area
-                  end
-                  local yEnd = yIndex + 1
-                  while minWidth > 0 and yEnd <= yCells do
-                    local nextRow = filled[yEnd]
-                    if not nextRow then break end
-                    local nextUsed = used[yEnd]
-                    local span = 0
-                    while span < minWidth do
-                      local xi = xIndex + span
-                      if xi > xCells then break end
-                      if not nextRow[xi] or (nextUsed and nextUsed[xi]) then
-                        break
-                      end
-                      span = span + 1
-                    end
-                    if span < minWidth then
-                      minWidth = span
-                    end
-                    if minWidth == 0 then break end
-                    height = height + 1
-                    area = minWidth * height
-                    if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
-                      bestX, bestY = xIndex, yIndex
-                      bestWidth, bestHeight = minWidth, height
-                      bestArea = area
-                    end
-                    yEnd = yEnd + 1
-                  end
-                end
-                xIndex = xIndex + 1
-              else
-                xIndex = xIndex + 1
-              end
-            end
-          end
-        end
-
-        if not bestX then break end
-
-        local x1Index = bestX
-        local x2Index = bestX + bestWidth
-        local y1Index = bestY
-        local y2Index = bestY + bestHeight
-        for yy = y1Index, y2Index - 1 do
-          local markRow = used[yy]
-          if not markRow then markRow = {}; used[yy] = markRow end
-          for xx = x1Index, x2Index - 1 do
-            if not markRow[xx] then
-              markRow[xx] = true
-              remaining = remaining - 1
-            end
-          end
-        end
-        local x1 = xs[x1Index]
-        local x2 = xs[x2Index]
-        local y1 = ys[y1Index]
-        local y2 = ys[y2Index]
-        if x1 and x2 and y1 and y2 then
-          if (x2 - x1) > EPS and (y2 - y1) > EPS then
-            table.insert(rects, {
-              x = x1,
-              y = y1,
-              w = x2 - x1,
-              h = y2 - y1,
-              name = pickName(x1, y1, x2, y2)
-            })
-          end
-        end
-        if table.getn(rects) > totalCells then break end
-      end
-
-      if table.getn(rects) == 0 then
-        return rects
-      end
-      return mergeAdjacency(rects)
-    end
-
-    local candidates = {}
-    table.insert(candidates, { list = cloneValid(valid), count = table.getn(valid) })
-
-    local spanRects = buildSpanRects()
-    if spanRects and table.getn(spanRects) > 0 then
-      table.insert(candidates, { list = spanRects, count = table.getn(spanRects) })
-    end
-
-    local greedyRects = buildGreedyRects()
-    if greedyRects and table.getn(greedyRects) > 0 then
-      table.insert(candidates, { list = greedyRects, count = table.getn(greedyRects) })
-    end
-
-    local best = candidates[1]
-    for i = 2, table.getn(candidates) do
-      local cand = candidates[i]
-      if cand.count < best.count then
-        best = cand
-      end
-    end
-
-    if not best or best.count >= table.getn(valid) then
+    if xCells <= 0 or yCells <= 0 then
       return cloneValid(valid)
     end
-    return best.list
+
+    local components = {}
+    local visited = {}
+    for yIndex = 1, yCells do
+      local row = filled[yIndex]
+      if row then
+        for xIndex = 1, xCells do
+          if row[xIndex] then
+            local vrow = visited[yIndex]
+            if not vrow or not vrow[xIndex] then
+              local queue = {}
+              local head = 1
+              local tail = 1
+              queue[1] = { x = xIndex, y = yIndex }
+              if not vrow then vrow = {}; visited[yIndex] = vrow end
+              vrow[xIndex] = true
+              local cells = {}
+              local cellCount = 0
+              local minX, maxX = xIndex, xIndex
+              local minY, maxY = yIndex, yIndex
+              while head <= tail do
+                local node = queue[head]
+                head = head + 1
+                cellCount = cellCount + 1
+                cells[cellCount] = { x = node.x, y = node.y }
+                if node.x < minX then minX = node.x end
+                if node.x > maxX then maxX = node.x end
+                if node.y < minY then minY = node.y end
+                if node.y > maxY then maxY = node.y end
+                local neighbours = {
+                  { x = node.x - 1, y = node.y },
+                  { x = node.x + 1, y = node.y },
+                  { x = node.x, y = node.y - 1 },
+                  { x = node.x, y = node.y + 1 }
+                }
+                for n = 1, 4 do
+                  local nb = neighbours[n]
+                  local ny = nb.y
+                  local nx = nb.x
+                  if ny >= 1 and ny <= yCells and nx >= 1 and nx <= xCells then
+                    local filledRow = filled[ny]
+                    if filledRow and filledRow[nx] then
+                      local vistRow = visited[ny]
+                      if not vistRow then vistRow = {}; visited[ny] = vistRow end
+                      if not vistRow[nx] then
+                        tail = tail + 1
+                        queue[tail] = { x = nx, y = ny }
+                        vistRow[nx] = true
+                      end
+                    end
+                  end
+                end
+              end
+              table.insert(components, { cells = cells, minX = minX, maxX = maxX, minY = minY, maxY = maxY })
+            end
+          end
+        end
+      end
+    end
+
+    local function adjacencyCost(rectList)
+      local total = 0
+      for i = 1, table.getn(rectList) do
+        local a = rectList[i]
+        local ax1 = xs[a.x1Index]
+        local ax2 = xs[a.x2Index]
+        local ay1 = ys[a.y1Index]
+        local ay2 = ys[a.y2Index]
+        for j = i + 1, table.getn(rectList) do
+          local b = rectList[j]
+          local bx1 = xs[b.x1Index]
+          local bx2 = xs[b.x2Index]
+          local by1 = ys[b.y1Index]
+          local by2 = ys[b.y2Index]
+          if math.abs(ax2 - bx1) <= EPS or math.abs(bx2 - ax1) <= EPS then
+            local overlap = math.min(ay2, by2) - math.max(ay1, by1)
+            if overlap > EPS then total = total + overlap end
+          elseif math.abs(ay2 - by1) <= EPS or math.abs(by2 - ay1) <= EPS then
+            local overlap = math.min(ax2, bx2) - math.max(ax1, bx1)
+            if overlap > EPS then total = total + overlap end
+          end
+        end
+      end
+      return total
+    end
+
+    local function buildFallback(component)
+      local fallback = {}
+      for i = 1, table.getn(component.cells) do
+        local cell = component.cells[i]
+        local x1 = xs[cell.x]
+        local x2 = xs[cell.x + 1]
+        local y1 = ys[cell.y]
+        local y2 = ys[cell.y + 1]
+        table.insert(fallback, {
+          x = x1,
+          y = y1,
+          w = x2 - x1,
+          h = y2 - y1,
+          name = pickName(x1, y1, x2, y2)
+        })
+      end
+      return fallback
+    end
+
+    local function coverComponent(component)
+      local mask = {}
+      local cellKeys = {}
+      for i = 1, table.getn(component.cells) do
+        local cell = component.cells[i]
+        local row = mask[cell.y]
+        if not row then row = {}; mask[cell.y] = row end
+        row[cell.x] = true
+        cell.key = tostring(cell.y) .. ':' .. tostring(cell.x)
+        cellKeys[i] = cell.key
+      end
+
+      local candidateRects = {}
+      local cellCandidates = {}
+      local seenRect = {}
+      local candCount = 0
+      for yStart = component.minY, component.maxY do
+        local row = mask[yStart]
+        if row then
+          for xStart = component.minX, component.maxX do
+            if row[xStart] then
+              local minWidth = 0
+              local yEnd = yStart
+              while true do
+                local current = mask[yEnd]
+                if not current then break end
+                local rowWidth = 0
+                local scanX = xStart
+                while current[scanX] do
+                  rowWidth = rowWidth + 1
+                  scanX = scanX + 1
+                end
+                if rowWidth == 0 then break end
+                if minWidth == 0 or rowWidth < minWidth then
+                  minWidth = rowWidth
+                end
+                for widthUsed = 1, minWidth do
+                  local xExclusive = xStart + widthUsed
+                  local yExclusive = yEnd + 1
+                  local rectKey = tostring(xStart) .. ':' .. tostring(yStart) .. ':' .. tostring(widthUsed) .. ':' .. tostring(yExclusive - yStart)
+                  if not seenRect[rectKey] then
+                    seenRect[rectKey] = true
+                    candCount = candCount + 1
+                    local rect = {
+                      x1Index = xStart,
+                      x2Index = xExclusive,
+                      y1Index = yStart,
+                      y2Index = yExclusive,
+                      cells = {},
+                      cellCount = 0
+                    }
+                    local idx = 0
+                    for yy = yStart, yExclusive - 1 do
+                      local maskRow = mask[yy]
+                      if not maskRow then
+                        rect = nil
+                        break
+                      end
+                      for xx = xStart, xExclusive - 1 do
+                        if not maskRow[xx] then
+                          rect = nil
+                          break
+                        end
+                        idx = idx + 1
+                        rect.cells[idx] = tostring(yy) .. ':' .. tostring(xx)
+                      end
+                      if not rect then break end
+                    end
+                    if rect then
+                      rect.cellCount = idx
+                      rect.x = xs[rect.x1Index]
+                      rect.y = ys[rect.y1Index]
+                      rect.w = xs[rect.x2Index] - rect.x
+                      rect.h = ys[rect.y2Index] - rect.y
+                      candidateRects[candCount] = rect
+                      for ci = 1, rect.cellCount do
+                        local ck = rect.cells[ci]
+                        local bucket = cellCandidates[ck]
+                        if not bucket then bucket = {}; cellCandidates[ck] = bucket end
+                        table.insert(bucket, candCount)
+                      end
+                    else
+                      candCount = candCount - 1
+                      seenRect[rectKey] = nil
+                    end
+                  end
+                end
+                yEnd = yEnd + 1
+                if yEnd > component.maxY then break end
+              end
+            end
+          end
+        end
+      end
+
+      for key, list in pairs(cellCandidates) do
+        table.sort(list, function(aIdx, bIdx)
+          local ra = candidateRects[aIdx]
+          local rb = candidateRects[bIdx]
+          if ra and rb then
+            if ra.cellCount ~= rb.cellCount then
+              return ra.cellCount > rb.cellCount
+            end
+            local aw = (ra.x2Index - ra.x1Index)
+            local bw = (rb.x2Index - rb.x1Index)
+            if aw ~= bw then
+              return aw > bw
+            end
+          end
+          return aIdx < bIdx
+        end)
+      end
+
+      local totalCells = table.getn(component.cells)
+      local bestSolution = nil
+      local bestCount = totalCells + 1
+      local bestAdjacency = 1e9
+      local covered = {}
+      local chosen = {}
+      local nodeBudget = 200000
+      local explored = 0
+      local aborted = false
+
+      local function pickPivot()
+        local bestKey, bestList, bestLen
+        for i = 1, totalCells do
+          local key = cellKeys[i]
+          if not covered[key] then
+            local candidates = cellCandidates[key]
+            if not candidates then
+              return key, {}
+            end
+            local validOptions = {}
+            for j = 1, table.getn(candidates) do
+              local rect = candidateRects[candidates[j]]
+              local ok = true
+              if rect then
+                for ci = 1, rect.cellCount do
+                  if covered[rect.cells[ci]] then
+                    ok = false
+                    break
+                  end
+                end
+                if ok then table.insert(validOptions, candidates[j]) end
+              end
+            end
+            local len = table.getn(validOptions)
+            if len == 0 then
+              return key, validOptions
+            end
+            if not bestLen or len < bestLen then
+              bestLen = len
+              bestKey = key
+              bestList = validOptions
+              if len == 1 then break end
+            end
+          end
+        end
+        return bestKey, bestList
+      end
+
+      local function search(depth)
+        if depth >= bestCount then return end
+        explored = explored + 1
+        if explored > nodeBudget then
+          aborted = true
+          return
+        end
+        local pivotKey, options = pickPivot()
+        if not pivotKey then
+          local adj = adjacencyCost(chosen)
+          if depth < bestCount or (depth == bestCount and adj < bestAdjacency) then
+            bestCount = depth
+            bestAdjacency = adj
+            bestSolution = {}
+            for i = 1, depth do bestSolution[i] = chosen[i] end
+          end
+          return
+        end
+        if table.getn(options) == 0 then
+          return
+        end
+        for oi = 1, table.getn(options) do
+          local rect = candidateRects[options[oi]]
+          local ok = true
+          for ci = 1, rect.cellCount do
+            if covered[rect.cells[ci]] then
+              ok = false
+              break
+            end
+          end
+          if ok then
+            for ci = 1, rect.cellCount do covered[rect.cells[ci]] = true end
+            chosen[table.getn(chosen) + 1] = rect
+            search(depth + 1)
+            chosen[table.getn(chosen)] = nil
+            for ci = 1, rect.cellCount do covered[rect.cells[ci]] = nil end
+            if aborted then return end
+          end
+        end
+      end
+
+      search(0)
+
+      local result = {}
+      if not bestSolution then
+        return buildFallback(component), true
+      end
+      for i = 1, table.getn(bestSolution) do
+        local rect = bestSolution[i]
+        local x1 = xs[rect.x1Index]
+        local x2 = xs[rect.x2Index]
+        local y1 = ys[rect.y1Index]
+        local y2 = ys[rect.y2Index]
+        table.insert(result, {
+          x = x1,
+          y = y1,
+          w = x2 - x1,
+          h = y2 - y1,
+          name = pickName(x1, y1, x2, y2)
+        })
+      end
+      return result, aborted
+    end
+
+    local combined = {}
+    local anyAborted = false
+    if table.getn(components) == 0 then
+      return cloneValid(valid)
+    end
+    for ci = 1, table.getn(components) do
+      local rectList, aborted = coverComponent(components[ci])
+      if aborted then anyAborted = true end
+      for ri = 1, table.getn(rectList) do
+        table.insert(combined, rectList[ri])
+      end
+    end
+    if table.getn(combined) == 0 then
+      return cloneValid(valid)
+    end
+    if anyAborted and table.getn(combined) > table.getn(valid) then
+      return cloneValid(valid)
+    end
+    return combined
   end
 
   function Extras:CombineSessionHotspots(mapId)
