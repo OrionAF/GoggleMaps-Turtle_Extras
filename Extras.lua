@@ -1163,30 +1163,28 @@ local function TryInit()
     end
     if table.getn(valid) == 0 then return {} end
 
-    local function collectEdges()
-      local xs, ys = {}, {}
-      for i = 1, table.getn(valid) do
-        local r = valid[i]
-        table.insert(xs, r.x)
-        table.insert(xs, r.x + r.w)
-        table.insert(ys, r.y)
-        table.insert(ys, r.y + r.h)
-      end
-      local function dedupe(sorted)
-        table.sort(sorted)
-        local unique = {}
-        for i = 1, table.getn(sorted) do
-          local v = sorted[i]
-          if table.getn(unique) == 0 or math.abs(v - unique[table.getn(unique)]) > EPS then
-            table.insert(unique, v)
-          end
+    local function dedupe(values)
+      table.sort(values)
+      local unique = {}
+      for i = 1, table.getn(values) do
+        local v = values[i]
+        if table.getn(unique) == 0 or math.abs(v - unique[table.getn(unique)]) > EPS then
+          table.insert(unique, v)
         end
-        return unique
       end
-      return dedupe(xs), dedupe(ys)
+      return unique
     end
 
-    local xs, ys = collectEdges()
+    local xs, ys = {}, {}
+    for i = 1, table.getn(valid) do
+      local r = valid[i]
+      table.insert(xs, r.x)
+      table.insert(xs, r.x + r.w)
+      table.insert(ys, r.y)
+      table.insert(ys, r.y + r.h)
+    end
+    xs = dedupe(xs)
+    ys = dedupe(ys)
     if table.getn(xs) < 2 or table.getn(ys) < 2 then
       return cloneValid(valid)
     end
@@ -1243,74 +1241,8 @@ local function TryInit()
       return "CUSTOM"
     end
 
-    local final = {}
     local xCells = table.getn(xs) - 1
     local yCells = table.getn(ys) - 1
-
-    local function addRect(x1Index, x2Index, y1Index, y2Index)
-      if not x1Index or not x2Index or not y1Index or not y2Index then return end
-      if x2Index <= x1Index or y2Index <= y1Index then return end
-      local x1 = xs[x1Index]
-      local x2 = xs[x2Index]
-      local y1 = ys[y1Index]
-      local y2 = ys[y2Index]
-      if (x2 - x1) > EPS and (y2 - y1) > EPS then
-        table.insert(final, {
-          x = x1,
-          y = y1,
-          w = x2 - x1,
-          h = y2 - y1,
-          name = pickName(x1, y1, x2, y2)
-        })
-      end
-    end
-
-    local used = {}
-    for yIndex = 1, yCells do
-      local row = filled[yIndex]
-      local usedRow = used[yIndex]
-      local xIndex = 1
-      while xIndex <= xCells do
-        local cellFilled = row and row[xIndex]
-        local cellUsed = usedRow and usedRow[xIndex]
-        if cellFilled and not cellUsed then
-          local xEnd = xIndex
-          while xEnd <= xCells do
-            local filledRow = row and row[xEnd]
-            local usedRowVal = usedRow and usedRow[xEnd]
-            if not filledRow or usedRowVal then break end
-            xEnd = xEnd + 1
-          end
-          local yEnd = yIndex + 1
-          while yEnd <= yCells do
-            local nextRow = filled[yEnd]
-            if not nextRow then break end
-            local nextUsed = used[yEnd]
-            local ok = true
-            for xi = xIndex, xEnd - 1 do
-              if not nextRow[xi] or (nextUsed and nextUsed[xi]) then
-                ok = false
-                break
-              end
-            end
-            if not ok then break end
-            yEnd = yEnd + 1
-          end
-          for yy = yIndex, yEnd - 1 do
-            local markRow = used[yy]
-            if not markRow then markRow = {}; used[yy] = markRow end
-            for xx = xIndex, xEnd - 1 do
-              markRow[xx] = true
-            end
-          end
-          addRect(xIndex, xEnd, yIndex, yEnd)
-          usedRow = used[yIndex]
-          xIndex = xEnd
-        else
-          xIndex = xIndex + 1
-        end
-      end
-    end
 
     local function mergeAdjacency(list)
       local changed = true
@@ -1374,11 +1306,212 @@ local function TryInit()
       return list
     end
 
-    local combined = mergeAdjacency(final)
-    if table.getn(combined) == 0 then
+    local function buildSpanRects()
+      local merged = {}
+      local prev = {}
+      for yIndex = 1, yCells do
+        local row = filled[yIndex]
+        local current = {}
+        local xIndex = 1
+        while xIndex <= xCells do
+          if row and row[xIndex] then
+            local start = xIndex
+            while xIndex <= xCells and row[xIndex] do
+              xIndex = xIndex + 1
+            end
+            local spanKey = tostring(start) .. ":" .. tostring(xIndex)
+            local existing = prev[spanKey]
+            if existing then
+              existing.y2Index = yIndex + 1
+              current[spanKey] = existing
+            else
+              local rect = {
+                x1Index = start,
+                x2Index = xIndex,
+                y1Index = yIndex,
+                y2Index = yIndex + 1
+              }
+              table.insert(merged, rect)
+              current[spanKey] = rect
+            end
+          else
+            xIndex = xIndex + 1
+          end
+        end
+        prev = current
+      end
+
+      local out = {}
+      for i = 1, table.getn(merged) do
+        local r = merged[i]
+        local x1 = xs[r.x1Index]
+        local x2 = xs[r.x2Index]
+        local y1 = ys[r.y1Index]
+        local y2 = ys[r.y2Index]
+        if x1 and x2 and y1 and y2 then
+          if (x2 - x1) > EPS and (y2 - y1) > EPS then
+            table.insert(out, {
+              x = x1,
+              y = y1,
+              w = x2 - x1,
+              h = y2 - y1,
+              name = pickName(x1, y1, x2, y2)
+            })
+          end
+        end
+      end
+      return out
+    end
+
+    local function buildGreedyRects()
+      local used = {}
+      local totalCells = 0
+      for yIndex = 1, yCells do
+        local row = filled[yIndex]
+        if row then
+          for xIndex = 1, xCells do
+            if row[xIndex] then
+              totalCells = totalCells + 1
+            end
+          end
+        end
+      end
+      if totalCells == 0 then return {} end
+
+      local remaining = totalCells
+      local rects = {}
+      local safety = 0
+      while remaining > 0 do
+        safety = safety + 1
+        if safety > totalCells * 2 then break end
+        local bestX, bestY, bestWidth, bestHeight = nil, nil, 0, 0
+        local bestArea = 0
+        for yIndex = 1, yCells do
+          local row = filled[yIndex]
+          if row then
+            local usedRow = used[yIndex]
+            local xIndex = 1
+            while xIndex <= xCells do
+              local occupied = row[xIndex]
+              local already = usedRow and usedRow[xIndex]
+              if occupied and not already then
+                local width = 0
+                while (xIndex + width) <= xCells do
+                  local filledRow = row[xIndex + width]
+                  local usedRowVal = usedRow and usedRow[xIndex + width]
+                  if not filledRow or usedRowVal then break end
+                  width = width + 1
+                end
+                local minWidth = width
+                local height = 1
+                local area = minWidth * height
+                if minWidth > 0 then
+                  if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
+                    bestX, bestY = xIndex, yIndex
+                    bestWidth, bestHeight = minWidth, height
+                    bestArea = area
+                  end
+                  local yEnd = yIndex + 1
+                  while minWidth > 0 and yEnd <= yCells do
+                    local nextRow = filled[yEnd]
+                    if not nextRow then break end
+                    local nextUsed = used[yEnd]
+                    local span = 0
+                    while span < minWidth do
+                      local xi = xIndex + span
+                      if xi > xCells then break end
+                      if not nextRow[xi] or (nextUsed and nextUsed[xi]) then
+                        break
+                      end
+                      span = span + 1
+                    end
+                    if span < minWidth then
+                      minWidth = span
+                    end
+                    if minWidth == 0 then break end
+                    height = height + 1
+                    area = minWidth * height
+                    if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
+                      bestX, bestY = xIndex, yIndex
+                      bestWidth, bestHeight = minWidth, height
+                      bestArea = area
+                    end
+                    yEnd = yEnd + 1
+                  end
+                end
+                xIndex = xIndex + 1
+              else
+                xIndex = xIndex + 1
+              end
+            end
+          end
+        end
+
+        if not bestX then break end
+
+        local x1Index = bestX
+        local x2Index = bestX + bestWidth
+        local y1Index = bestY
+        local y2Index = bestY + bestHeight
+        for yy = y1Index, y2Index - 1 do
+          local markRow = used[yy]
+          if not markRow then markRow = {}; used[yy] = markRow end
+          for xx = x1Index, x2Index - 1 do
+            if not markRow[xx] then
+              markRow[xx] = true
+              remaining = remaining - 1
+            end
+          end
+        end
+        local x1 = xs[x1Index]
+        local x2 = xs[x2Index]
+        local y1 = ys[y1Index]
+        local y2 = ys[y2Index]
+        if x1 and x2 and y1 and y2 then
+          if (x2 - x1) > EPS and (y2 - y1) > EPS then
+            table.insert(rects, {
+              x = x1,
+              y = y1,
+              w = x2 - x1,
+              h = y2 - y1,
+              name = pickName(x1, y1, x2, y2)
+            })
+          end
+        end
+        if table.getn(rects) > totalCells then break end
+      end
+
+      if table.getn(rects) == 0 then
+        return rects
+      end
+      return mergeAdjacency(rects)
+    end
+
+    local candidates = {}
+    table.insert(candidates, { list = cloneValid(valid), count = table.getn(valid) })
+
+    local spanRects = buildSpanRects()
+    if spanRects and table.getn(spanRects) > 0 then
+      table.insert(candidates, { list = spanRects, count = table.getn(spanRects) })
+    end
+
+    local greedyRects = buildGreedyRects()
+    if greedyRects and table.getn(greedyRects) > 0 then
+      table.insert(candidates, { list = greedyRects, count = table.getn(greedyRects) })
+    end
+
+    local best = candidates[1]
+    for i = 2, table.getn(candidates) do
+      local cand = candidates[i]
+      if cand.count < best.count then
+        best = cand
+      end
+    end
+
+    if not best or best.count >= table.getn(valid) then
       return cloneValid(valid)
     end
-    return combined
+    return best.list
   end
 
   function Extras:CombineSessionHotspots(mapId)
