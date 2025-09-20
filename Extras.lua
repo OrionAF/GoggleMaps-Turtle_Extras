@@ -757,29 +757,68 @@ local function TryInit()
     return list
   end
 
+  -- Export session hotspots to a copy-friendly window. If mapId is nil, exports all maps in session.
   function Extras:ExportHotspots(mapId)
     if not devEnabled then return end
     local function fmt(r)
       return string.format("%.2f^%.2f^%.2f^%.2f^%s", r.x, r.y, r.w, r.h, r.name or "CUSTOM")
     end
-    if mapId then
-      local list = self:_buildHotspotList(mapId)
-      local buf = {}
-      for i = 1, table.getn(list) do table.insert(buf, fmt(list[i])) end
-      local line = string.format("[%d] = \"%s\",", mapId, table.concat(buf, "~"))
-      DEFAULT_CHAT_FRAME:AddMessage("GoggleMaps: |r" .. line)
-    else
-      -- Export all
-      local byMap = {}
-      for mid, _ in pairs(self.fileZones) do byMap[mid] = true end
-      for mid, _ in pairs(self.sessionEdits) do byMap[mid] = true end
-      for mid, _ in pairs(byMap) do
-        local list = self:_buildHotspotList(mid)
+    local lines = {}
+    local function exportFor(mid)
+      local sz = self.sessionEdits[mid] or {}
+      if table.getn(sz) > 0 then
         local buf = {}
-        for i = 1, table.getn(list) do table.insert(buf, fmt(list[i])) end
-        local line = string.format("[%d] = \"%s\",", mid, table.concat(buf, "~"))
-        DEFAULT_CHAT_FRAME:AddMessage("GoggleMaps: |r" .. line)
+        for i = 1, table.getn(sz) do table.insert(buf, fmt(sz[i])) end
+        table.insert(lines, string.format("[%d] = \"%s\",", mid, table.concat(buf, "~")))
       end
+    end
+    if mapId then
+      exportFor(mapId)
+    else
+      for mid, _ in pairs(self.sessionEdits) do exportFor(mid) end
+    end
+    local text = table.getn(lines) > 0 and table.concat(lines, "\n") or ""
+    self:ShowExportWindow(text)
+  end
+
+  function Extras:ShowExportWindow(text)
+    if not self._exportWin then
+      local frame = CreateFrame("Frame", "GMExtrasExport", UIParent)
+      frame:SetWidth(680); frame:SetHeight(420)
+      frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+      frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = { left = 5, right = 5, top = 5, bottom = 5 } })
+      frame:SetBackdropColor(0, 0, 0, 0.92)
+      frame:EnableMouse(true); frame:SetMovable(true)
+      frame:SetClampedToScreen(true)
+      frame:RegisterForDrag("LeftButton"); frame:SetScript("OnDragStart", function() frame:StartMoving() end)
+      frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
+
+      local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      title:SetPoint("TOP", 0, -8)
+      title:SetText("GoggleMaps Export (Session)")
+
+      local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      close:SetPoint("TOPRIGHT", -10, -6); close:SetWidth(60); close:SetHeight(22)
+      close:SetText("Close"); close:SetScript("OnClick", function() frame:Hide() end)
+
+      local scroll = CreateFrame("ScrollFrame", "GMExtrasExportScroll", frame, "UIPanelScrollFrameTemplate")
+      scroll:SetPoint("TOPLEFT", 12, -32); scroll:SetPoint("BOTTOMRIGHT", -30, 12)
+      local edit = CreateFrame("EditBox", "GMExtrasExportEdit", scroll)
+      edit:SetMultiLine(true); edit:SetWidth(620); edit:SetAutoFocus(true)
+      if _G.ChatFontNormal then edit:SetFontObject(ChatFontNormal) end
+      edit:SetScript("OnEscapePressed", function() frame:Hide() end)
+      edit:SetScript("OnEditFocusGained", function() edit:HighlightText() end)
+      scroll:SetScrollChild(edit)
+
+      frame.scroll = scroll; frame.edit = edit
+      frame:SetScript("OnShow", function() edit:HighlightText(); edit:SetFocus() end)
+      self._exportWin = frame
+    end
+    self._exportWin:Show()
+    if self._exportWin.edit then
+      self._exportWin.edit:SetText(text or "")
+      self._exportWin.edit:HighlightText()
+      self._exportWin.edit:SetFocus()
     end
   end
 
@@ -805,17 +844,10 @@ local function TryInit()
       close:SetPoint("TOPRIGHT", -10, -6); close:SetWidth(60); close:SetHeight(22)
       close:SetText("Close"); close:SetScript("OnClick", function() frame:Hide() end)
 
-      local export = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      export:SetPoint("BOTTOMLEFT", 12, 12); export:SetWidth(100); export:SetHeight(22)
-      export:SetText("Export Map")
-      export:SetScript("OnClick", function()
-        local mid = GM.Map and GM.Map.mapId
-        if mid then Extras:ExportHotspots(mid) else DEFAULT_CHAT_FRAME:AddMessage("GoggleMaps: |rNo mapId") end
-      end)
-
+      -- Export Session (all session hotspots across all maps)
       local exportAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      exportAll:SetPoint("LEFT", export, "RIGHT", 6, 0); exportAll:SetWidth(100); exportAll:SetHeight(22)
-      exportAll:SetText("Export All")
+      exportAll:SetPoint("BOTTOMLEFT", 12, 12); exportAll:SetWidth(120); exportAll:SetHeight(22)
+      exportAll:SetText("Export Session")
       exportAll:SetScript("OnClick", function() Extras:ExportHotspots(nil) end)
 
       local clear = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -846,7 +878,7 @@ local function TryInit()
 
       local combineBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
       combineBtn:SetWidth(80); combineBtn:SetHeight(22)
-      combineBtn:ClearAllPoints(); combineBtn:SetPoint("BOTTOMLEFT", export, "TOPLEFT", 0, 6)
+      combineBtn:ClearAllPoints(); combineBtn:SetPoint("BOTTOMLEFT", exportAll, "TOPLEFT", 0, 6)
       combineBtn:SetText("Combine")
       combineBtn:SetScript("OnClick", function() Extras:CombineCurrentSession() end)
 
@@ -1111,6 +1143,95 @@ local function TryInit()
       addUnique(ys, r.y)
       addUnique(ys, r.y + r.h)
     end
+    -- Pre-pass: pairwise safe merges directly on input to handle obvious overlaps/containment/edge cases
+    local function spansOverlap(a1, a2, b1, b2)
+      return not (a2 <= b1 + EPS or b2 <= a1 + EPS)
+    end
+    local function spanContains(a1, a2, b1, b2)
+      return (a1 <= b1 + EPS) and (a2 >= b2 - EPS)
+    end
+    local function canMergeSafeRect(A, B)
+      local ax1, ax2 = A.x, A.x + A.w
+      local bx1, bx2 = B.x, B.x + B.w
+      local ay1, ay2 = A.y, A.y + A.h
+      local by1, by2 = B.y, B.y + B.h
+      -- containment
+      if spanContains(ax1, ax2, bx1, bx2) and spanContains(ay1, ay2, by1, by2) then
+        return true, ax1, ay1, ax2 - ax1, ay2 - ay1
+      end
+      if spanContains(bx1, bx2, ax1, ax2) and spanContains(by1, by2, ay1, ay2) then
+        return true, bx1, by1, bx2 - bx1, by2 - by1
+      end
+      -- one-axis contains + other overlaps -> rectangle union
+      if spansOverlap(ax1, ax2, bx1, bx2) and (spanContains(ay1, ay2, by1, by2) or spanContains(by1, by2, ay1, ay2)) then
+        local x1 = (ax1 < bx1) and ax1 or bx1
+        local x2 = (ax2 > bx2) and ax2 or bx2
+        local y1 = (ay1 < by1) and ay1 or by1
+        local y2 = (ay2 > by2) and ay2 or by2
+        return true, x1, y1, x2 - x1, y2 - y1
+      end
+      if spansOverlap(ay1, ay2, by1, by2) and (spanContains(ax1, ax2, bx1, bx2) or spanContains(bx1, bx2, ax1, ax2)) then
+        local x1 = (ax1 < bx1) and ax1 or bx1
+        local x2 = (ax2 > bx2) and ax2 or bx2
+        local y1 = (ay1 < by1) and ay1 or by1
+        local y2 = (ay2 > by2) and ay2 or by2
+        return true, x1, y1, x2 - x1, y2 - y1
+      end
+      return false
+    end
+    local function pairwiseMerge(list)
+      local out = {}
+      for i = 1, table.getn(list) do
+        local r = list[i]
+        out[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
+      end
+      local changed = true
+      while changed do
+        changed = false
+        local i = 1
+        while i <= table.getn(out) do
+          local a = out[i]
+          local j = i + 1
+          local merged = false
+          while j <= table.getn(out) do
+            local b = out[j]
+            local ok, nx, ny, nw, nh = canMergeSafeRect(a, b)
+            if not ok then
+              -- try strict edge-adjacent merges (same span on other axis)
+              if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) and (nearlyEqual(a.x + a.w, b.x) or nearlyEqual(b.x + b.w, a.x)) then
+                ok = true
+                nx = (a.x < b.x) and a.x or b.x
+                ny = a.y; nw = (a.x + a.w > b.x + b.w) and (a.x + a.w - nx) or (b.x + b.w - nx); nh = a.h
+              elseif nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) and (nearlyEqual(a.y + a.h, b.y) or nearlyEqual(b.y + b.h, a.y)) then
+                ok = true
+                nx = a.x; ny = (a.y < b.y) and a.y or b.y; nw = a.w; nh = (a.y + a.h > b.y + b.h) and (a.y + a.h - ny) or (b.y + b.h - ny)
+              end
+            end
+            if ok then
+              a.x, a.y, a.w, a.h = nx, ny, nw, nh
+              if not a.name or a.name == "" then a.name = b.name end
+              table.remove(out, j)
+              changed = true; merged = true
+              break
+            else
+              j = j + 1
+            end
+          end
+          if not merged then i = i + 1 end
+        end
+      end
+      return out
+    end
+
+    -- First, simplify with pairwise merging to ensure obvious reductions even without grid
+    valid = pairwiseMerge(valid)
+    xs, ys = {}, {}
+    for i = 1, table.getn(valid) do
+      local r = valid[i]
+      addUnique(xs, r.x); addUnique(xs, r.x + r.w)
+      addUnique(ys, r.y); addUnique(ys, r.y + r.h)
+    end
+
     if table.getn(xs) < 2 or table.getn(ys) < 2 then
       local copy = {}
       for i = 1, table.getn(valid) do
@@ -1124,6 +1245,19 @@ local function TryInit()
     local xIndex, yIndex = {}, {}
     for i = 1, table.getn(xs) do xIndex[key(xs[i])] = i end
     for i = 1, table.getn(ys) do yIndex[key(ys[i])] = i end
+    local function findIndex(arr, idxMap, v)
+      local k = key(v)
+      local i = idxMap[k]
+      if i then return i end
+      -- Fallback tolerant search (handles tiny drift)
+      local bestI, bestD
+      for j = 1, table.getn(arr) do
+        local d = math.abs(arr[j] - v)
+        if not bestD or d < bestD then bestD = d; bestI = j end
+      end
+      if bestD and bestD < (EPS * 10) then return bestI end
+      return nil
+    end
     local filled = {}
     for i = 1, table.getn(valid) do
       local r = valid[i]
@@ -1131,72 +1265,274 @@ local function TryInit()
       local x2 = r.x + r.w
       local y1 = r.y
       local y2 = r.y + r.h
-      local ix1 = xIndex[key(x1)]
-      local ix2 = xIndex[key(x2)]
-      local iy1 = yIndex[key(y1)]
-      local iy2 = yIndex[key(y2)]
+      local ix1 = findIndex(xs, xIndex, x1)
+      local ix2 = findIndex(xs, xIndex, x2)
+      local iy1 = findIndex(ys, yIndex, y1)
+      local iy2 = findIndex(ys, yIndex, y2)
       if ix1 and ix2 and iy1 and iy2 then
-        for iy = iy1, iy2 - 1 do
-          local row = filled[iy]
-          if not row then row = {}; filled[iy] = row end
-          for ix = ix1, ix2 - 1 do
-            row[ix] = true
+        if ix2 > ix1 and iy2 > iy1 then
+          for iy = iy1, iy2 - 1 do
+            local row = filled[iy]
+            if not row then row = {}; filled[iy] = row end
+            for ix = ix1, ix2 - 1 do
+              row[ix] = true
+            end
           end
         end
       end
     end
-    local merged = {}
-    local prev = {}
+    -- Semi-aggressive exact cover: repeatedly extract the largest-area all-true rectangle (exact, no over-coverage)
     local xCount = table.getn(xs)
     local yCount = table.getn(ys)
-    for iy = 1, yCount - 1 do
-      local row = filled[iy] or {}
-      local current = {}
-      local ix = 1
-      while ix <= xCount - 1 do
-        if row[ix] then
-          local start = ix
-          while ix <= xCount - 1 and row[ix] do ix = ix + 1 end
-          local x1 = xs[start]
-          local x2 = xs[ix]
-          local y1 = ys[iy]
-          local y2 = ys[iy + 1]
-          local spanKey = key(x1) .. ":" .. key(x2)
-          local rect = prev[spanKey]
-          if rect and math.abs(rect.y2 - y1) < EPS then
-            rect.y2 = y2
-            current[spanKey] = rect
-          else
-            local newRect = { x1 = x1, y1 = y1, x2 = x2, y2 = y2 }
-            table.insert(merged, newRect)
-            current[spanKey] = newRect
-          end
-        else
-          ix = ix + 1
+    local function anyFilled()
+      for iy = 1, yCount - 1 do
+        local r = filled[iy]
+        if r then
+          for ix = 1, xCount - 1 do if r[ix] then return true end end
         end
       end
-      prev = current
+      return false
+    end
+    local function largestRectInMatrix()
+      local heights = {}
+      for ix = 1, xCount - 1 do heights[ix] = 0 end
+      local best = { area = 0 }
+      for iy = 1, yCount - 1 do
+        local row = filled[iy] or {}
+        for ix = 1, xCount - 1 do
+          if row[ix] then heights[ix] = (heights[ix] or 0) + 1 else heights[ix] = 0 end
+        end
+        -- Lua 5.0-safe stack (avoid table.getn semantics): manage pointer explicitly
+        local stackH, stackS, sp = {}, {}, 0
+        local function push(h, s)
+          sp = sp + 1; stackH[sp] = h; stackS[sp] = s
+        end
+        local function topH() return stackH[sp] end
+        local function topS() return stackS[sp] end
+        local function setTopS(v) stackS[sp] = v end
+        local function pop()
+          local h = stackH[sp]; local s = stackS[sp]
+          stackH[sp] = nil; stackS[sp] = nil; sp = sp - 1
+          return h, s
+        end
+        local ix = 1
+        while ix <= xCount - 1 do
+          local start = ix
+          local h = heights[ix] or 0
+          while sp > 0 and topH() > h do
+            local height, s = pop()
+            local e = ix
+            if height > 0 and e > s then
+              local x1 = xs[s]; local x2 = xs[e]
+              local y2 = ys[iy + 1]; local y1 = ys[iy - height + 1]
+              local area = (x2 - x1) * (y2 - y1)
+              if area > best.area + EPS then
+                best.area = area; best.s = s; best.e = e; best.rowEnd = iy; best.height = height
+              end
+            end
+            start = s
+          end
+          if sp == 0 or topH() < h then
+            push(h, start)
+          else
+            -- equal height: extend start to farthest left
+            setTopS(start)
+          end
+          ix = ix + 1
+        end
+        -- flush
+        while sp > 0 do
+          local height, s = pop()
+          local e = xCount
+          if height > 0 and e > s then
+            local x1 = xs[s]; local x2 = xs[e]
+            local y2 = ys[iy + 1]; local y1 = ys[iy - height + 1]
+            local area = (x2 - x1) * (y2 - y1)
+            if area > best.area + EPS then
+              best.area = area; best.s = s; best.e = e; best.rowEnd = iy; best.height = height
+            end
+          end
+        end
+      end
+      if best.area <= EPS then
+        -- Fallback: pick first remaining cell to ensure progress
+        for fy = 1, yCount - 1 do
+          local r = filled[fy]
+          if r then
+            for fx = 1, xCount - 1 do
+              if r[fx] then return fy, fy, fx, fx + 1 end
+            end
+          end
+        end
+        return nil
+      end
+      local rs = best.rowEnd - best.height + 1
+      local re = best.rowEnd
+      local cs = best.s
+      local ce = best.e
+      return rs, re, cs, ce
     end
     local final = {}
-    for i = 1, table.getn(merged) do
-      local m = merged[i]
-      local w = m.x2 - m.x1
-      local h = m.y2 - m.y1
-      if w > EPS and h > EPS then
-        local rect = { x = m.x1, y = m.y1, w = w, h = h, name = "CUSTOM" }
+    while anyFilled() do
+      local rs, re, cs, ce = largestRectInMatrix()
+      if not rs then break end
+      local x1 = xs[cs]; local x2 = xs[ce]
+      local y1 = ys[rs]; local y2 = ys[re + 1]
+      if (x2 - x1) > EPS and (y2 - y1) > EPS then
+        local rect = { x = x1, y = y1, w = (x2 - x1), h = (y2 - y1), name = "CUSTOM" }
         for j = 1, table.getn(valid) do
           local src = valid[j]
-          local sx1 = src.x
-          local sy1 = src.y
-          local sx2 = src.x + src.w
-          local sy2 = src.y + src.h
-          if sx1 <= m.x1 + EPS and sx2 >= m.x2 - EPS and sy1 <= m.y1 + EPS and sy2 >= m.y2 - EPS then
+          local sx1 = src.x; local sy1 = src.y
+          local sx2 = src.x + src.w; local sy2 = src.y + src.h
+          if sx1 <= x1 + EPS and sx2 >= x2 - EPS and sy1 <= y1 + EPS and sy2 >= y2 - EPS then
             if src.name then rect.name = src.name end
             break
           end
         end
         table.insert(final, rect)
       end
+      -- carve out selected rectangle from filled
+      for iy = rs, re do
+        local row = filled[iy]
+        if row then
+          for ix = cs, ce - 1 do row[ix] = false end
+        end
+      end
+    end
+    -- Post-pass: also merge rectangles that are only edge-adjacent.
+    -- This handles cases where overlap-based union left splits along exact shared edges.
+    local function mergeAdjacent(list)
+      local changed = true
+      while changed do
+        changed = false
+        local n = table.getn(list)
+        local i = 1
+        while i <= n do
+          local a = list[i]
+          local j = i + 1
+          local mergedPair = false
+          while j <= n do
+            local b = list[j]
+            if a and b then
+              -- Horizontal adjacency: same y-span, touching on X edges
+              if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) then
+                if nearlyEqual(a.x + a.w, b.x) then
+                  a.w = (b.x + b.w) - a.x
+                  if not a.name or a.name == "" then a.name = b.name end
+                  table.remove(list, j)
+                  n = n - 1
+                  changed = true; mergedPair = true
+                  break
+                elseif nearlyEqual(b.x + b.w, a.x) then
+                  local newx = b.x
+                  a.w = (a.x + a.w) - newx
+                  a.x = newx
+                  if not a.name or a.name == "" then a.name = b.name end
+                  table.remove(list, j)
+                  n = n - 1
+                  changed = true; mergedPair = true
+                  break
+                end
+              end
+              -- Vertical adjacency: same x-span, touching on Y edges
+              if nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) then
+                if nearlyEqual(a.y + a.h, b.y) then
+                  a.h = (b.y + b.h) - a.y
+                  if not a.name or a.name == "" then a.name = b.name end
+                  table.remove(list, j)
+                  n = n - 1
+                  changed = true; mergedPair = true
+                  break
+                elseif nearlyEqual(b.y + b.h, a.y) then
+                  local newy = b.y
+                  a.h = (a.y + a.h) - newy
+                  a.y = newy
+                  if not a.name or a.name == "" then a.name = b.name end
+                  table.remove(list, j)
+                  n = n - 1
+                  changed = true; mergedPair = true
+                  break
+                end
+              end
+            end
+            j = j + 1
+          end
+          if not mergedPair then i = i + 1 end
+        end
+      end
+      return list
+    end
+    final = mergeAdjacent(final)
+
+    -- Post-pass 2: safe overlap/containment merges into bounding box.
+    -- Only merge when one axis' span contains the other's (or full containment), ensuring union is a rectangle.
+    local function spansOverlap(a1, a2, b1, b2)
+      return not (a2 <= b1 + EPS or b2 <= a1 + EPS)
+    end
+    local function spanContains(a1, a2, b1, b2)
+      return (a1 <= b1 + EPS) and (a2 >= b2 - EPS)
+    end
+    local function canMergeSafe(a, b)
+      local ax1, ax2 = a.x, a.x + a.w
+      local bx1, bx2 = b.x, b.x + b.w
+      local ay1, ay2 = a.y, a.y + a.h
+      local by1, by2 = b.y, b.y + b.h
+      -- Full containment
+      if spanContains(ax1, ax2, bx1, bx2) and spanContains(ay1, ay2, by1, by2) then
+        return true, ax1, ay1, ax2 - ax1, ay2 - ay1
+      end
+      if spanContains(bx1, bx2, ax1, ax2) and spanContains(by1, by2, ay1, ay2) then
+        return true, bx1, by1, bx2 - bx1, by2 - by1
+      end
+      -- One axis contains, other overlaps: union is a rectangle
+      if spansOverlap(ax1, ax2, bx1, bx2) and (spanContains(ay1, ay2, by1, by2) or spanContains(by1, by2, ay1, ay2)) then
+        local x1 = (ax1 < bx1) and ax1 or bx1
+        local x2 = (ax2 > bx2) and ax2 or bx2
+        local y1 = (ay1 < by1) and ay1 or by1
+        local y2 = (ay2 > by2) and ay2 or by2
+        return true, x1, y1, x2 - x1, y2 - y1
+      end
+      if spansOverlap(ay1, ay2, by1, by2) and (spanContains(ax1, ax2, bx1, bx2) or spanContains(bx1, bx2, ax1, ax2)) then
+        local x1 = (ax1 < bx1) and ax1 or bx1
+        local x2 = (ax2 > bx2) and ax2 or bx2
+        local y1 = (ay1 < by1) and ay1 or by1
+        local y2 = (ay2 > by2) and ay2 or by2
+        return true, x1, y1, x2 - x1, y2 - y1
+      end
+      return false
+    end
+    local changed = true
+    while changed do
+      changed = false
+      local i = 1
+      while i <= table.getn(final) do
+        local a = final[i]
+        local j = i + 1
+        local mergedAny = false
+        while j <= table.getn(final) do
+          local b = final[j]
+          local ok, nx, ny, nw, nh = canMergeSafe(a, b)
+          if ok then
+            a.x, a.y, a.w, a.h = nx, ny, nw, nh
+            if not a.name or a.name == "" then a.name = b.name end
+            table.remove(final, j)
+            changed = true; mergedAny = true
+            break
+          else
+            j = j + 1
+          end
+        end
+        if not mergedAny then i = i + 1 end
+      end
+    end
+    if table.getn(final) == 0 and table.getn(valid) > 0 then
+      -- Fallback to pre-merged exact pairwise result if grid extraction failed to yield rectangles
+      local copy = {}
+      for i = 1, table.getn(valid) do
+        local r = valid[i]
+        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
+      end
+      return copy
     end
     return final
   end
