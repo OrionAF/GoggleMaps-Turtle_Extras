@@ -1247,12 +1247,13 @@ local function TryInit()
     local xCells = table.getn(xs) - 1
     local yCells = table.getn(ys) - 1
 
-    local function finalizeCellRect(rect)
-      if not rect then return end
-      local x1 = xs[rect.x1]
-      local x2 = xs[rect.x2]
-      local y1 = ys[rect.y1]
-      local y2 = ys[rect.y2]
+    local function addRect(x1Index, x2Index, y1Index, y2Index)
+      if not x1Index or not x2Index or not y1Index or not y2Index then return end
+      if x2Index <= x1Index or y2Index <= y1Index then return end
+      local x1 = xs[x1Index]
+      local x2 = xs[x2Index]
+      local y1 = ys[y1Index]
+      local y2 = ys[y2Index]
       if (x2 - x1) > EPS and (y2 - y1) > EPS then
         table.insert(final, {
           x = x1,
@@ -1264,87 +1265,51 @@ local function TryInit()
       end
     end
 
-    local active = {}
+    local used = {}
     for yIndex = 1, yCells do
-      local row = filled[yIndex] or {}
-      local segments = {}
-      local col = 1
-      while col <= xCells do
-        if row[col] then
-          local startCol = col
-          col = col + 1
-          while col <= xCells and row[col] do
-            col = col + 1
+      local row = filled[yIndex]
+      local usedRow = used[yIndex]
+      local xIndex = 1
+      while xIndex <= xCells do
+        local cellFilled = row and row[xIndex]
+        local cellUsed = usedRow and usedRow[xIndex]
+        if cellFilled and not cellUsed then
+          local xEnd = xIndex
+          while xEnd <= xCells do
+            local filledRow = row and row[xEnd]
+            local usedRowVal = usedRow and usedRow[xEnd]
+            if not filledRow or usedRowVal then break end
+            xEnd = xEnd + 1
           end
-          table.insert(segments, { x1 = startCol, x2 = col })
-        else
-          col = col + 1
-        end
-      end
-
-      if table.getn(active) > 1 then
-        table.sort(active, function(a, b) return a.x1 < b.x1 end)
-      end
-
-      local nextActive = {}
-      local ai, si = 1, 1
-      while si <= table.getn(segments) or ai <= table.getn(active) do
-        local seg = segments[si]
-        local rect = active[ai]
-        if rect and (not seg or rect.x2 <= (seg and seg.x1 or rect.x2)) then
-          finalizeCellRect(rect)
-          ai = ai + 1
-        elseif seg and (not rect or seg.x2 <= rect.x1) then
-          table.insert(nextActive, { x1 = seg.x1, x2 = seg.x2, y1 = yIndex, y2 = yIndex + 1 })
-          si = si + 1
-        else
-          local segStart = seg.x1
-          local segEnd = seg.x2
-          while segStart < segEnd - EPS do
-            rect = active[ai]
-            if not rect then
-              table.insert(nextActive, { x1 = segStart, x2 = segEnd, y1 = yIndex, y2 = yIndex + 1 })
-              segStart = segEnd
-              break
-            end
-            if rect.x2 <= segStart + EPS then
-              finalizeCellRect(rect)
-              ai = ai + 1
-            else
-              if segStart > rect.x1 + EPS then
-                finalizeCellRect({ x1 = rect.x1, x2 = segStart, y1 = rect.y1, y2 = rect.y2 })
-                rect = { x1 = segStart, x2 = rect.x2, y1 = rect.y1, y2 = rect.y2 }
-              end
-              local overlapEnd = segEnd
-              if rect.x2 < overlapEnd then overlapEnd = rect.x2 end
-              local remainder = nil
-              if rect.x2 - overlapEnd > EPS then
-                remainder = { x1 = overlapEnd, x2 = rect.x2, y1 = rect.y1, y2 = rect.y2 }
-                rect.x2 = overlapEnd
-              end
-              rect.y2 = yIndex + 1
-              table.insert(nextActive, rect)
-              if remainder then
-                active[ai] = remainder
-              else
-                ai = ai + 1
-              end
-              segStart = overlapEnd
-              if segEnd - segStart <= EPS then
-                segStart = segEnd
+          local yEnd = yIndex + 1
+          while yEnd <= yCells do
+            local nextRow = filled[yEnd]
+            if not nextRow then break end
+            local nextUsed = used[yEnd]
+            local ok = true
+            for xi = xIndex, xEnd - 1 do
+              if not nextRow[xi] or (nextUsed and nextUsed[xi]) then
+                ok = false
+                break
               end
             end
+            if not ok then break end
+            yEnd = yEnd + 1
           end
-          if segStart >= segEnd - EPS then
-            si = si + 1
+          for yy = yIndex, yEnd - 1 do
+            local markRow = used[yy]
+            if not markRow then markRow = {}; used[yy] = markRow end
+            for xx = xIndex, xEnd - 1 do
+              markRow[xx] = true
+            end
           end
+          addRect(xIndex, xEnd, yIndex, yEnd)
+          usedRow = used[yIndex]
+          xIndex = xEnd
+        else
+          xIndex = xIndex + 1
         end
       end
-      active = nextActive
-    end
-
-    for i = 1, table.getn(active) do
-      finalizeCellRect(active[i])
     end
 
     local function mergeAdjacency(list)
