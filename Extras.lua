@@ -88,6 +88,7 @@ local function TryInit()
   function Extras:SelectZone(mapId, reason, opts)
     if not mapId then return end
     local suppress = opts and opts.suppressOverlay
+    local force = opts and opts.force
     local mapFrame, overlayFrame, wasMapVisible, wasOverlayVisible
     if suppress then
       mapFrame = GM.frame
@@ -97,7 +98,7 @@ local function TryInit()
     end
     local Map = GM.Map
     local current = self:GetSelectedMapId() or (Map and Map.mapId)
-    if current and mapId == current then
+    if current and mapId == current and not force then
       if suppress then
         if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
         if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
@@ -134,6 +135,15 @@ local function TryInit()
       GM.Overlay:AddMapIdToZonesToDraw(realId)
     end
     if _G.pfMap and _G.pfMap.UpdateNodes then _G.pfMap:UpdateNodes() end
+  end
+
+  function Extras:RefreshCurrentMap(reason)
+    local mapId = self:GetSelectedMapId()
+    if not mapId and GM.Map then
+      mapId = GM.Map.mapId or GM.Map.realMapId
+    end
+    if not mapId then return end
+    self:SelectZone(mapId, reason or "Extras refresh", { force = true })
   end
 
   -- SavedVars bucket
@@ -217,7 +227,7 @@ local function TryInit()
         msg("Dev commands:")
         msg("- /gmaps edit: Toggle hotspot editor")
         msg("- /gmaps hsui: Hotspot list UI (delete/export)")
-        msg("- /gmaps export [all|current]: Print hotspot lines")
+        msg("- /gmaps export [session|current|mapId]: Copy hotspot lines")
         msg("- /gmaps drawzone <id|name|off>: Force draw target zone")
         msg("- /gmaps mode <rect|poly>: Drawing mode")
         msg("- /gmaps polyres <step>: Polygon fill resolution (default 1.0)")
@@ -237,11 +247,20 @@ local function TryInit()
       Extras:ShowEditorList()
       return true
     elseif cmd == "export" or cmd == "exporthotspots" then
-      if arg1 and string.lower(arg1) == "all" then
-        Extras:ExportHotspots(nil)
+      local target = arg1 and string.lower(arg1) or nil
+      local mapId
+      if not target or target == "" or target == "all" or target == "session" then
+        mapId = nil
+      elseif target == "current" or target == "selected" then
+        mapId = Extras:GetSelectedMapId() or (GM.Map and (GM.Map.mapId or GM.Map.realMapId))
       else
-        Extras:ExportHotspots(GM.Map and GM.Map.mapId)
+        mapId = tonumber(arg1)
+        if not mapId then
+          msg("Export: provide a numeric mapId, 'session', or 'current'.")
+          return true
+        end
       end
+      Extras:ExportHotspots(mapId)
       return true
     elseif cmd == "hs" then
       local mode = arg1 and string.lower(arg1) or nil
@@ -760,6 +779,9 @@ local function TryInit()
   -- Export session hotspots to a copy-friendly window. If mapId is nil, exports all maps in session.
   function Extras:ExportHotspots(mapId)
     if not devEnabled then return end
+    if type(mapId) == "string" then
+      mapId = tonumber(mapId)
+    end
     local function fmt(r)
       return string.format("%.2f^%.2f^%.2f^%.2f^%s", r.x, r.y, r.w, r.h, r.name or "CUSTOM")
     end
@@ -845,13 +867,13 @@ local function TryInit()
       close:SetText("Close"); close:SetScript("OnClick", function() frame:Hide() end)
 
       -- Export Session (all session hotspots across all maps)
-      local exportAll = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      exportAll:SetPoint("BOTTOMLEFT", 12, 12); exportAll:SetWidth(120); exportAll:SetHeight(22)
-      exportAll:SetText("Export Session")
-      exportAll:SetScript("OnClick", function() Extras:ExportHotspots(nil) end)
+      local exportSession = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+      exportSession:SetPoint("BOTTOMLEFT", 12, 12); exportSession:SetWidth(120); exportSession:SetHeight(22)
+      exportSession:SetText("Export Session")
+      exportSession:SetScript("OnClick", function() Extras:ExportHotspots(nil) end)
 
       local clear = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-      clear:SetPoint("LEFT", exportAll, "RIGHT", 6, 0); clear:SetWidth(120); clear:SetHeight(22)
+      clear:SetPoint("LEFT", exportSession, "RIGHT", 6, 0); clear:SetWidth(120); clear:SetHeight(22)
       clear:SetText("Clear Session")
       clear:SetScript("OnClick", function()
         Extras:ClearCurrentSession()
@@ -878,7 +900,7 @@ local function TryInit()
 
       local combineBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
       combineBtn:SetWidth(80); combineBtn:SetHeight(22)
-      combineBtn:ClearAllPoints(); combineBtn:SetPoint("BOTTOMLEFT", exportAll, "TOPLEFT", 0, 6)
+      combineBtn:ClearAllPoints(); combineBtn:SetPoint("BOTTOMLEFT", exportSession, "TOPLEFT", 0, 6)
       combineBtn:SetText("Combine")
       combineBtn:SetScript("OnClick", function() Extras:CombineCurrentSession() end)
 
@@ -1087,12 +1109,14 @@ local function TryInit()
   function Extras:ClearCurrentSession()
     if not self._listFrame then return end
     local cleared = 0
+    local clearedAny = false
     if self._listAll then
       -- Clear all maps
       for mid, list in pairs(self.sessionEdits) do
         if list and table.getn(list) > 0 then
           self.sessionEdits[mid] = {}
           cleared = cleared + 1
+          clearedAny = true
         end
       end
       self:Print("Cleared session hotspots for all maps")
@@ -1101,11 +1125,14 @@ local function TryInit()
       if mid and self.sessionEdits[mid] then
         self.sessionEdits[mid] = {}
         cleared = 1
+        clearedAny = true
         local name = (GM.Map.Area[mid] and GM.Map.Area[mid].name) or tostring(mid)
         self:Print("Cleared session hotspots for " .. name)
       end
     end
-    self:LoadFileHotspots(); self:RebuildSessionSpots(); self:DrawOverlays(); self:RefreshEditorList()
+    self:LoadFileHotspots(); self:RebuildSessionSpots()
+    if clearedAny then self:RefreshCurrentMap("Extras clear session") end
+    self:DrawOverlays(); self:RefreshEditorList()
   end
 
   function Extras:_CombineAxisAlignedRects(rects)
