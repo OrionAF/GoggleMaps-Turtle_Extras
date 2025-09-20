@@ -1173,7 +1173,6 @@ local function TryInit()
       addUnique(ys, r.y)
       addUnique(ys, r.y + r.h)
     end
-    -- Pre-pass: pairwise safe merges directly on input to handle obvious overlaps/containment/edge cases
     local function spansOverlap(a1, a2, b1, b2)
       return not (a2 <= b1 + EPS or b2 <= a1 + EPS)
     end
@@ -1185,14 +1184,12 @@ local function TryInit()
       local bx1, bx2 = B.x, B.x + B.w
       local ay1, ay2 = A.y, A.y + A.h
       local by1, by2 = B.y, B.y + B.h
-      -- containment
       if spanContains(ax1, ax2, bx1, bx2) and spanContains(ay1, ay2, by1, by2) then
         return true, ax1, ay1, ax2 - ax1, ay2 - ay1
       end
       if spanContains(bx1, bx2, ax1, ax2) and spanContains(by1, by2, ay1, ay2) then
         return true, bx1, by1, bx2 - bx1, by2 - by1
       end
-      -- one-axis contains + other overlaps -> rectangle union
       if spansOverlap(ax1, ax2, bx1, bx2) and (spanContains(ay1, ay2, by1, by2) or spanContains(by1, by2, ay1, ay2)) then
         local x1 = (ax1 < bx1) and ax1 or bx1
         local x2 = (ax2 > bx2) and ax2 or bx2
@@ -1227,14 +1224,18 @@ local function TryInit()
             local b = out[j]
             local ok, nx, ny, nw, nh = canMergeSafeRect(a, b)
             if not ok then
-              -- try strict edge-adjacent merges (same span on other axis)
               if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) and (nearlyEqual(a.x + a.w, b.x) or nearlyEqual(b.x + b.w, a.x)) then
                 ok = true
                 nx = (a.x < b.x) and a.x or b.x
-                ny = a.y; nw = (a.x + a.w > b.x + b.w) and (a.x + a.w - nx) or (b.x + b.w - nx); nh = a.h
+                ny = a.y
+                nw = (a.x + a.w > b.x + b.w) and (a.x + a.w - nx) or (b.x + b.w - nx)
+                nh = a.h
               elseif nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) and (nearlyEqual(a.y + a.h, b.y) or nearlyEqual(b.y + b.h, a.y)) then
                 ok = true
-                nx = a.x; ny = (a.y < b.y) and a.y or b.y; nw = a.w; nh = (a.y + a.h > b.y + b.h) and (a.y + a.h - ny) or (b.y + b.h - ny)
+                nx = a.x
+                ny = (a.y < b.y) and a.y or b.y
+                nw = a.w
+                nh = (a.y + a.h > b.y + b.h) and (a.y + a.h - ny) or (b.y + b.h - ny)
               end
             end
             if ok then
@@ -1253,7 +1254,6 @@ local function TryInit()
       return out
     end
 
-    -- First, simplify with pairwise merging to ensure obvious reductions even without grid
     valid = pairwiseMerge(valid)
     xs, ys = {}, {}
     for i = 1, table.getn(valid) do
@@ -1277,15 +1277,14 @@ local function TryInit()
     for i = 1, table.getn(ys) do yIndex[key(ys[i])] = i end
     local function findIndex(arr, idxMap, v)
       local k = key(v)
-      local i = idxMap[k]
-      if i then return i end
-      -- Fallback tolerant search (handles tiny drift)
-      local bestI, bestD
+      local idx = idxMap[k]
+      if idx then return idx end
+      local bestD, bestI
       for j = 1, table.getn(arr) do
         local d = math.abs(arr[j] - v)
         if not bestD or d < bestD then bestD = d; bestI = j end
       end
-      if bestD and bestD < (EPS * 10) then return bestI end
+      if bestD and bestD < (EPS * 25) then return bestI end
       return nil
     end
     local filled = {}
@@ -1299,138 +1298,120 @@ local function TryInit()
       local ix2 = findIndex(xs, xIndex, x2)
       local iy1 = findIndex(ys, yIndex, y1)
       local iy2 = findIndex(ys, yIndex, y2)
-      if ix1 and ix2 and iy1 and iy2 then
-        if ix2 > ix1 and iy2 > iy1 then
-          for iy = iy1, iy2 - 1 do
-            local row = filled[iy]
-            if not row then row = {}; filled[iy] = row end
-            for ix = ix1, ix2 - 1 do
-              row[ix] = true
-            end
+      if ix1 and ix2 and iy1 and iy2 and ix2 > ix1 and iy2 > iy1 then
+        for iy = iy1, iy2 - 1 do
+          local row = filled[iy]
+          if not row then row = {}; filled[iy] = row end
+          for ix = ix1, ix2 - 1 do
+            row[ix] = true
           end
         end
       end
     end
-    -- Semi-aggressive exact cover: repeatedly extract the largest-area all-true rectangle (exact, no over-coverage)
-    local xCount = table.getn(xs)
-    local yCount = table.getn(ys)
-    local function anyFilled()
-      for iy = 1, yCount - 1 do
-        local r = filled[iy]
-        if r then
-          for ix = 1, xCount - 1 do if r[ix] then return true end end
+    local function pickName(x1, y1, x2, y2)
+      for i = 1, table.getn(valid) do
+        local src = valid[i]
+        local sx1 = src.x
+        local sy1 = src.y
+        local sx2 = src.x + src.w
+        local sy2 = src.y + src.h
+        if sx1 <= x1 + EPS and sx2 >= x2 - EPS and sy1 <= y1 + EPS and sy2 >= y2 - EPS then
+          if src.name and src.name ~= "" then return src.name end
         end
       end
-      return false
-    end
-    local function largestRectInMatrix()
-      local heights = {}
-      for ix = 1, xCount - 1 do heights[ix] = 0 end
-      local best = { area = 0 }
-      for iy = 1, yCount - 1 do
-        local row = filled[iy] or {}
-        for ix = 1, xCount - 1 do
-          if row[ix] then heights[ix] = (heights[ix] or 0) + 1 else heights[ix] = 0 end
-        end
-        -- Lua 5.0-safe stack (avoid table.getn semantics): manage pointer explicitly
-        local stackH, stackS, sp = {}, {}, 0
-        local function push(h, s)
-          sp = sp + 1; stackH[sp] = h; stackS[sp] = s
-        end
-        local function topH() return stackH[sp] end
-        local function topS() return stackS[sp] end
-        local function setTopS(v) stackS[sp] = v end
-        local function pop()
-          local h = stackH[sp]; local s = stackS[sp]
-          stackH[sp] = nil; stackS[sp] = nil; sp = sp - 1
-          return h, s
-        end
-        local ix = 1
-        while ix <= xCount - 1 do
-          local start = ix
-          local h = heights[ix] or 0
-          while sp > 0 and topH() > h do
-            local height, s = pop()
-            local e = ix
-            if height > 0 and e > s then
-              local x1 = xs[s]; local x2 = xs[e]
-              local y2 = ys[iy + 1]; local y1 = ys[iy - height + 1]
-              local area = (x2 - x1) * (y2 - y1)
-              if area > best.area + EPS then
-                best.area = area; best.s = s; best.e = e; best.rowEnd = iy; best.height = height
-              end
-            end
-            start = s
-          end
-          if sp == 0 or topH() < h then
-            push(h, start)
-          else
-            -- equal height: extend start to farthest left
-            setTopS(start)
-          end
-          ix = ix + 1
-        end
-        -- flush
-        while sp > 0 do
-          local height, s = pop()
-          local e = xCount
-          if height > 0 and e > s then
-            local x1 = xs[s]; local x2 = xs[e]
-            local y2 = ys[iy + 1]; local y1 = ys[iy - height + 1]
-            local area = (x2 - x1) * (y2 - y1)
-            if area > best.area + EPS then
-              best.area = area; best.s = s; best.e = e; best.rowEnd = iy; best.height = height
-            end
-          end
-        end
-      end
-      if best.area <= EPS then
-        -- Fallback: pick first remaining cell to ensure progress
-        for fy = 1, yCount - 1 do
-          local r = filled[fy]
-          if r then
-            for fx = 1, xCount - 1 do
-              if r[fx] then return fy, fy, fx, fx + 1 end
-            end
-          end
-        end
-        return nil
-      end
-      local rs = best.rowEnd - best.height + 1
-      local re = best.rowEnd
-      local cs = best.s
-      local ce = best.e
-      return rs, re, cs, ce
+      return "CUSTOM"
     end
     local final = {}
-    while anyFilled() do
-      local rs, re, cs, ce = largestRectInMatrix()
-      if not rs then break end
-      local x1 = xs[cs]; local x2 = xs[ce]
-      local y1 = ys[rs]; local y2 = ys[re + 1]
-      if (x2 - x1) > EPS and (y2 - y1) > EPS then
-        local rect = { x = x1, y = y1, w = (x2 - x1), h = (y2 - y1), name = "CUSTOM" }
-        for j = 1, table.getn(valid) do
-          local src = valid[j]
-          local sx1 = src.x; local sy1 = src.y
-          local sx2 = src.x + src.w; local sy2 = src.y + src.h
-          if sx1 <= x1 + EPS and sx2 >= x2 - EPS and sy1 <= y1 + EPS and sy2 >= y2 - EPS then
-            if src.name then rect.name = src.name end
+    local active = {}
+    local xCount = table.getn(xs)
+    local yCount = table.getn(ys)
+    for iy = 1, yCount - 1 do
+      local row = filled[iy] or {}
+      local segments = {}
+      local segStart = nil
+      for ix = 1, xCount - 1 do
+        if row[ix] then
+          if not segStart then segStart = ix end
+        else
+          if segStart then
+            table.insert(segments, { ix1 = segStart, ix2 = ix })
+            segStart = nil
+          end
+        end
+      end
+      if segStart then
+        table.insert(segments, { ix1 = segStart, ix2 = xCount })
+        segStart = nil
+      end
+      local used = {}
+      local newActive = {}
+      for s = 1, table.getn(segments) do
+        local seg = segments[s]
+        local match = nil
+        for a = 1, table.getn(active) do
+          local rect = active[a]
+          if rect.ix1 == seg.ix1 and rect.ix2 == seg.ix2 then
+            match = a
             break
           end
         end
-        table.insert(final, rect)
-      end
-      -- carve out selected rectangle from filled
-      for iy = rs, re do
-        local row = filled[iy]
-        if row then
-          for ix = cs, ce - 1 do row[ix] = false end
+        if match then
+          local rect = active[match]
+          rect.y2 = ys[iy + 1]
+          table.insert(newActive, rect)
+          used[match] = true
+        else
+          local x1 = xs[seg.ix1]
+          local x2 = xs[seg.ix2]
+          local y1 = ys[iy]
+          local y2 = ys[iy + 1]
+          if (x2 - x1) > EPS and (y2 - y1) > EPS then
+            table.insert(newActive, {
+              ix1 = seg.ix1,
+              ix2 = seg.ix2,
+              y1 = y1,
+              y2 = y2,
+              name = pickName(x1, y1, x2, y2)
+            })
+          end
         end
       end
+      for a = 1, table.getn(active) do
+        if not used[a] then
+          local rect = active[a]
+          local x1 = xs[rect.ix1]
+          local x2 = xs[rect.ix2]
+          local y1 = rect.y1
+          local y2 = rect.y2
+          if (x2 - x1) > EPS and (y2 - y1) > EPS then
+            table.insert(final, {
+              x = x1,
+              y = y1,
+              w = x2 - x1,
+              h = y2 - y1,
+              name = rect.name or pickName(x1, y1, x2, y2)
+            })
+          end
+        end
+      end
+      active = newActive
     end
-    -- Post-pass: also merge rectangles that are only edge-adjacent.
-    -- This handles cases where overlap-based union left splits along exact shared edges.
+    for a = 1, table.getn(active) do
+      local rect = active[a]
+      local x1 = xs[rect.ix1]
+      local x2 = xs[rect.ix2]
+      local y1 = rect.y1
+      local y2 = rect.y2
+      if (x2 - x1) > EPS and (y2 - y1) > EPS then
+        table.insert(final, {
+          x = x1,
+          y = y1,
+          w = x2 - x1,
+          h = y2 - y1,
+          name = rect.name or pickName(x1, y1, x2, y2)
+        })
+      end
+    end
     local function mergeAdjacent(list)
       local changed = true
       while changed do
@@ -1496,41 +1477,6 @@ local function TryInit()
 
     -- Post-pass 2: safe overlap/containment merges into bounding box.
     -- Only merge when one axis' span contains the other's (or full containment), ensuring union is a rectangle.
-    local function spansOverlap(a1, a2, b1, b2)
-      return not (a2 <= b1 + EPS or b2 <= a1 + EPS)
-    end
-    local function spanContains(a1, a2, b1, b2)
-      return (a1 <= b1 + EPS) and (a2 >= b2 - EPS)
-    end
-    local function canMergeSafe(a, b)
-      local ax1, ax2 = a.x, a.x + a.w
-      local bx1, bx2 = b.x, b.x + b.w
-      local ay1, ay2 = a.y, a.y + a.h
-      local by1, by2 = b.y, b.y + b.h
-      -- Full containment
-      if spanContains(ax1, ax2, bx1, bx2) and spanContains(ay1, ay2, by1, by2) then
-        return true, ax1, ay1, ax2 - ax1, ay2 - ay1
-      end
-      if spanContains(bx1, bx2, ax1, ax2) and spanContains(by1, by2, ay1, ay2) then
-        return true, bx1, by1, bx2 - bx1, by2 - by1
-      end
-      -- One axis contains, other overlaps: union is a rectangle
-      if spansOverlap(ax1, ax2, bx1, bx2) and (spanContains(ay1, ay2, by1, by2) or spanContains(by1, by2, ay1, ay2)) then
-        local x1 = (ax1 < bx1) and ax1 or bx1
-        local x2 = (ax2 > bx2) and ax2 or bx2
-        local y1 = (ay1 < by1) and ay1 or by1
-        local y2 = (ay2 > by2) and ay2 or by2
-        return true, x1, y1, x2 - x1, y2 - y1
-      end
-      if spansOverlap(ay1, ay2, by1, by2) and (spanContains(ax1, ax2, bx1, bx2) or spanContains(bx1, bx2, ax1, ax2)) then
-        local x1 = (ax1 < bx1) and ax1 or bx1
-        local x2 = (ax2 > bx2) and ax2 or bx2
-        local y1 = (ay1 < by1) and ay1 or by1
-        local y2 = (ay2 > by2) and ay2 or by2
-        return true, x1, y1, x2 - x1, y2 - y1
-      end
-      return false
-    end
     local changed = true
     while changed do
       changed = false
@@ -1541,7 +1487,7 @@ local function TryInit()
         local mergedAny = false
         while j <= table.getn(final) do
           local b = final[j]
-          local ok, nx, ny, nw, nh = canMergeSafe(a, b)
+          local ok, nx, ny, nw, nh = canMergeSafeRect(a, b)
           if ok then
             a.x, a.y, a.w, a.h = nx, ny, nw, nh
             if not a.name or a.name == "" then a.name = b.name end
@@ -1589,10 +1535,8 @@ local function TryInit()
       if count > 0 then
         local combined = self:_CombineAxisAlignedRects(list)
         local after = table.getn(combined)
-        local different = false
-        if after > 0 and after < count then
-          different = true
-        elseif after == count then
+        local different = (after ~= count)
+        if not different and after == count then
           for j = 1, after do
             local a = list[j]
             local b = combined[j]
