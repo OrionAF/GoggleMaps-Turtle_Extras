@@ -522,9 +522,12 @@ local function TryInit()
           end
         end
       end
-      -- Ensure any old base hotspot frames are hidden
+      -- Ensure any old hotspot frames are hidden when no longer in use
       for key, fr in pairs(self.frames) do
-        if string.sub(key, 1, 3) == "hs:" and not touched[key] then fr:Hide() end
+        local prefix = string.sub(key or "", 1, 7)
+        if ((prefix == "custom:" or string.sub(prefix, 1, 3) == "hs:") and not touched[key]) then
+          fr:Hide()
+        end
       end
     else
       -- Hide all hotspot frames when overlay is off
