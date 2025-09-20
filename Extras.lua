@@ -1140,6 +1140,7 @@ local function TryInit()
 
   function Extras:_CombineAxisAlignedRects(rects)
     local EPS = 0.0001
+
     local function cloneValid(list)
       local copy = {}
       for i = 1, table.getn(list) do
@@ -1148,6 +1149,7 @@ local function TryInit()
       end
       return copy
     end
+
     local valid = {}
     for i = 1, table.getn(rects or {}) do
       local r = rects[i]
@@ -1195,17 +1197,6 @@ local function TryInit()
           return i
         end
       end
-      local bestIdx, bestDelta
-      for i = 1, table.getn(arr) do
-        local delta = math.abs(arr[i] - value)
-        if not bestDelta or delta < bestDelta then
-          bestDelta = delta
-          bestIdx = i
-        end
-      end
-      if bestDelta and bestDelta <= (EPS * 10) then
-        return bestIdx
-      end
       return nil
     end
 
@@ -1216,13 +1207,14 @@ local function TryInit()
       local x2Index = findIndex(xs, r.x + r.w)
       local y1Index = findIndex(ys, r.y)
       local y2Index = findIndex(ys, r.y + r.h)
-      if x1Index and x2Index and y1Index and y2Index and x2Index > x1Index and y2Index > y1Index then
-        for yIndex = y1Index, y2Index - 1 do
-          local row = filled[yIndex]
-          if not row then row = {}; filled[yIndex] = row end
-          for xIndex = x1Index, x2Index - 1 do
-            row[xIndex] = true
-          end
+      if not (x1Index and x2Index and y1Index and y2Index and x2Index > x1Index and y2Index > y1Index) then
+        return cloneValid(valid)
+      end
+      for yIndex = y1Index, y2Index - 1 do
+        local row = filled[yIndex]
+        if not row then row = {}; filled[yIndex] = row end
+        for xIndex = x1Index, x2Index - 1 do
+          row[xIndex] = true
         end
       end
     end
@@ -1256,347 +1248,224 @@ local function TryInit()
           if row[xIndex] then
             local vrow = visited[yIndex]
             if not vrow or not vrow[xIndex] then
-              local queue = {}
-              local head = 1
-              local tail = 1
-              queue[1] = { x = xIndex, y = yIndex }
+              local queueX, queueY = {}, {}
+              local head, tail = 1, 1
+              queueX[1], queueY[1] = xIndex, yIndex
               if not vrow then vrow = {}; visited[yIndex] = vrow end
               vrow[xIndex] = true
-              local cells = {}
-              local cellCount = 0
-              local minX, maxX = xIndex, xIndex
-              local minY, maxY = yIndex, yIndex
+              local component = {
+                cells = {},
+                cellCount = 0,
+                minX = xIndex,
+                maxX = xIndex,
+                minY = yIndex,
+                maxY = yIndex
+              }
               while head <= tail do
-                local node = queue[head]
+                local cx = queueX[head]
+                local cy = queueY[head]
                 head = head + 1
-                cellCount = cellCount + 1
-                cells[cellCount] = { x = node.x, y = node.y }
-                if node.x < minX then minX = node.x end
-                if node.x > maxX then maxX = node.x end
-                if node.y < minY then minY = node.y end
-                if node.y > maxY then maxY = node.y end
-                local neighbours = {
-                  { x = node.x - 1, y = node.y },
-                  { x = node.x + 1, y = node.y },
-                  { x = node.x, y = node.y - 1 },
-                  { x = node.x, y = node.y + 1 }
-                }
-                for n = 1, 4 do
-                  local nb = neighbours[n]
-                  local ny = nb.y
-                  local nx = nb.x
-                  if ny >= 1 and ny <= yCells and nx >= 1 and nx <= xCells then
-                    local filledRow = filled[ny]
-                    if filledRow and filledRow[nx] then
-                      local vistRow = visited[ny]
-                      if not vistRow then vistRow = {}; visited[ny] = vistRow end
-                      if not vistRow[nx] then
-                        tail = tail + 1
-                        queue[tail] = { x = nx, y = ny }
-                        vistRow[nx] = true
-                      end
-                    end
-                  end
+                component.cellCount = component.cellCount + 1
+                component.cells[component.cellCount] = { x = cx, y = cy }
+                if cx < component.minX then component.minX = cx end
+                if cx > component.maxX then component.maxX = cx end
+                if cy < component.minY then component.minY = cy end
+                if cy > component.maxY then component.maxY = cy end
+
+                local function enqueue(nx, ny)
+                  if nx < 1 or nx > xCells or ny < 1 or ny > yCells then return end
+                  local frow = filled[ny]
+                  if not (frow and frow[nx]) then return end
+                  local vny = visited[ny]
+                  if not vny then vny = {}; visited[ny] = vny end
+                  if vny[nx] then return end
+                  tail = tail + 1
+                  queueX[tail], queueY[tail] = nx, ny
+                  vny[nx] = true
                 end
+
+                enqueue(cx - 1, cy)
+                enqueue(cx + 1, cy)
+                enqueue(cx, cy - 1)
+                enqueue(cx, cy + 1)
               end
-              table.insert(components, { cells = cells, minX = minX, maxX = maxX, minY = minY, maxY = maxY })
+              table.insert(components, component)
             end
           end
         end
       end
     end
 
-    local function adjacencyCost(rectList)
-      local total = 0
-      for i = 1, table.getn(rectList) do
-        local a = rectList[i]
-        local ax1 = xs[a.x1Index]
-        local ax2 = xs[a.x2Index]
-        local ay1 = ys[a.y1Index]
-        local ay2 = ys[a.y2Index]
-        for j = i + 1, table.getn(rectList) do
-          local b = rectList[j]
-          local bx1 = xs[b.x1Index]
-          local bx2 = xs[b.x2Index]
-          local by1 = ys[b.y1Index]
-          local by2 = ys[b.y2Index]
-          if math.abs(ax2 - bx1) <= EPS or math.abs(bx2 - ax1) <= EPS then
-            local overlap = math.min(ay2, by2) - math.max(ay1, by1)
-            if overlap > EPS then total = total + overlap end
-          elseif math.abs(ay2 - by1) <= EPS or math.abs(by2 - ay1) <= EPS then
-            local overlap = math.min(ax2, bx2) - math.max(ax1, bx1)
-            if overlap > EPS then total = total + overlap end
-          end
+    if table.getn(components) == 0 then
+      return cloneValid(valid)
+    end
+
+    local function growRect(component, mask, startX, startY)
+      local row = mask[startY]
+      if not row or not row[startX] then return nil end
+      local width = 0
+      local xIndex = startX
+      while row[xIndex] do
+        width = width + 1
+        xIndex = xIndex + 1
+      end
+      local bestWidth = width
+      local bestHeight = 1
+      local bestArea = width
+      local minWidth = width
+      local height = 1
+      local yIndex = startY + 1
+      while yIndex <= component.maxY do
+        local crow = mask[yIndex]
+        if not crow then break end
+        local rowWidth = 0
+        local xx = startX
+        while crow[xx] do
+          rowWidth = rowWidth + 1
+          xx = xx + 1
         end
+        if rowWidth == 0 then break end
+        if rowWidth < minWidth then minWidth = rowWidth end
+        height = height + 1
+        local area = minWidth * height
+        if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
+          bestArea = area
+          bestWidth = minWidth
+          bestHeight = height
+        end
+        if minWidth == 0 then break end
+        yIndex = yIndex + 1
       end
-      return total
+      return {
+        x1Index = startX,
+        x2Index = startX + bestWidth,
+        y1Index = startY,
+        y2Index = startY + bestHeight
+      }
     end
 
-    local function buildFallback(component)
-      local fallback = {}
-      for i = 1, table.getn(component.cells) do
-        local cell = component.cells[i]
-        local x1 = xs[cell.x]
-        local x2 = xs[cell.x + 1]
-        local y1 = ys[cell.y]
-        local y2 = ys[cell.y + 1]
-        table.insert(fallback, {
-          x = x1,
-          y = y1,
-          w = x2 - x1,
-          h = y2 - y1,
-          name = pickName(x1, y1, x2, y2)
-        })
-      end
-      return fallback
-    end
+    local combined = {}
 
-    local function coverComponent(component)
+    for ci = 1, table.getn(components) do
+      local component = components[ci]
       local mask = {}
-      local cellKeys = {}
-      for i = 1, table.getn(component.cells) do
+      for i = 1, component.cellCount do
         local cell = component.cells[i]
         local row = mask[cell.y]
         if not row then row = {}; mask[cell.y] = row end
         row[cell.x] = true
-        cell.key = tostring(cell.y) .. ':' .. tostring(cell.x)
-        cellKeys[i] = cell.key
       end
 
-      local candidateRects = {}
-      local cellCandidates = {}
-      local seenRect = {}
-      local candCount = 0
-      for yStart = component.minY, component.maxY do
-        local row = mask[yStart]
-        if row then
-          for xStart = component.minX, component.maxX do
-            if row[xStart] then
-              local minWidth = 0
-              local yEnd = yStart
-              while true do
-                local current = mask[yEnd]
-                if not current then break end
-                local rowWidth = 0
-                local scanX = xStart
-                while current[scanX] do
-                  rowWidth = rowWidth + 1
-                  scanX = scanX + 1
-                end
-                if rowWidth == 0 then break end
-                if minWidth == 0 or rowWidth < minWidth then
-                  minWidth = rowWidth
-                end
-                for widthUsed = 1, minWidth do
-                  local xExclusive = xStart + widthUsed
-                  local yExclusive = yEnd + 1
-                  local rectKey = tostring(xStart) .. ':' .. tostring(yStart) .. ':' .. tostring(widthUsed) .. ':' .. tostring(yExclusive - yStart)
-                  if not seenRect[rectKey] then
-                    seenRect[rectKey] = true
-                    candCount = candCount + 1
-                    local rect = {
-                      x1Index = xStart,
-                      x2Index = xExclusive,
-                      y1Index = yStart,
-                      y2Index = yExclusive,
-                      cells = {},
-                      cellCount = 0
-                    }
-                    local idx = 0
-                    for yy = yStart, yExclusive - 1 do
-                      local maskRow = mask[yy]
-                      if not maskRow then
-                        rect = nil
-                        break
-                      end
-                      for xx = xStart, xExclusive - 1 do
-                        if not maskRow[xx] then
-                          rect = nil
-                          break
-                        end
-                        idx = idx + 1
-                        rect.cells[idx] = tostring(yy) .. ':' .. tostring(xx)
-                      end
-                      if not rect then break end
-                    end
-                    if rect then
-                      rect.cellCount = idx
-                      rect.x = xs[rect.x1Index]
-                      rect.y = ys[rect.y1Index]
-                      rect.w = xs[rect.x2Index] - rect.x
-                      rect.h = ys[rect.y2Index] - rect.y
-                      candidateRects[candCount] = rect
-                      for ci = 1, rect.cellCount do
-                        local ck = rect.cells[ci]
-                        local bucket = cellCandidates[ck]
-                        if not bucket then bucket = {}; cellCandidates[ck] = bucket end
-                        table.insert(bucket, candCount)
-                      end
-                    else
-                      candCount = candCount - 1
-                      seenRect[rectKey] = nil
-                    end
-                  end
-                end
-                yEnd = yEnd + 1
-                if yEnd > component.maxY then break end
+      local function findStart()
+        for yIndex = component.minY, component.maxY do
+          local row = mask[yIndex]
+          if row then
+            for xIndex = component.minX, component.maxX do
+              if row[xIndex] then
+                return xIndex, yIndex
               end
             end
           end
         end
+        return nil, nil
       end
 
-      for key, list in pairs(cellCandidates) do
-        table.sort(list, function(aIdx, bIdx)
-          local ra = candidateRects[aIdx]
-          local rb = candidateRects[bIdx]
-          if ra and rb then
-            if ra.cellCount ~= rb.cellCount then
-              return ra.cellCount > rb.cellCount
-            end
-            local aw = (ra.x2Index - ra.x1Index)
-            local bw = (rb.x2Index - rb.x1Index)
-            if aw ~= bw then
-              return aw > bw
-            end
-          end
-          return aIdx < bIdx
-        end)
-      end
-
-      local totalCells = table.getn(component.cells)
-      local bestSolution = nil
-      local bestCount = totalCells + 1
-      local bestAdjacency = 1e9
-      local covered = {}
-      local chosen = {}
-      local nodeBudget = 200000
-      local explored = 0
-      local aborted = false
-
-      local function pickPivot()
-        local bestKey, bestList, bestLen
-        for i = 1, totalCells do
-          local key = cellKeys[i]
-          if not covered[key] then
-            local candidates = cellCandidates[key]
-            if not candidates then
-              return key, {}
-            end
-            local validOptions = {}
-            for j = 1, table.getn(candidates) do
-              local rect = candidateRects[candidates[j]]
-              local ok = true
-              if rect then
-                for ci = 1, rect.cellCount do
-                  if covered[rect.cells[ci]] then
-                    ok = false
-                    break
-                  end
-                end
-                if ok then table.insert(validOptions, candidates[j]) end
+      while true do
+        local sx, sy = findStart()
+        if not sx then break end
+        local rectIdx = growRect(component, mask, sx, sy)
+        if not rectIdx then
+          mask[sy][sx] = nil
+        else
+          for yIndex = rectIdx.y1Index, rectIdx.y2Index - 1 do
+            local row = mask[yIndex]
+            if row then
+              for xIndex = rectIdx.x1Index, rectIdx.x2Index - 1 do
+                row[xIndex] = nil
               end
             end
-            local len = table.getn(validOptions)
-            if len == 0 then
-              return key, validOptions
-            end
-            if not bestLen or len < bestLen then
-              bestLen = len
-              bestKey = key
-              bestList = validOptions
-              if len == 1 then break end
-            end
           end
-        end
-        return bestKey, bestList
-      end
-
-      local function search(depth)
-        if depth >= bestCount then return end
-        explored = explored + 1
-        if explored > nodeBudget then
-          aborted = true
-          return
-        end
-        local pivotKey, options = pickPivot()
-        if not pivotKey then
-          local adj = adjacencyCost(chosen)
-          if depth < bestCount or (depth == bestCount and adj < bestAdjacency) then
-            bestCount = depth
-            bestAdjacency = adj
-            bestSolution = {}
-            for i = 1, depth do bestSolution[i] = chosen[i] end
-          end
-          return
-        end
-        if table.getn(options) == 0 then
-          return
-        end
-        for oi = 1, table.getn(options) do
-          local rect = candidateRects[options[oi]]
-          local ok = true
-          for ci = 1, rect.cellCount do
-            if covered[rect.cells[ci]] then
-              ok = false
-              break
-            end
-          end
-          if ok then
-            for ci = 1, rect.cellCount do covered[rect.cells[ci]] = true end
-            chosen[table.getn(chosen) + 1] = rect
-            search(depth + 1)
-            chosen[table.getn(chosen)] = nil
-            for ci = 1, rect.cellCount do covered[rect.cells[ci]] = nil end
-            if aborted then return end
-          end
+          local x1 = xs[rectIdx.x1Index]
+          local x2 = xs[rectIdx.x2Index]
+          local y1 = ys[rectIdx.y1Index]
+          local y2 = ys[rectIdx.y2Index]
+          local newRect = { x = x1, y = y1, w = x2 - x1, h = y2 - y1 }
+          local name = pickName(x1, y1, x2, y2)
+          newRect.name = name or "CUSTOM"
+          table.insert(combined, newRect)
         end
       end
-
-      search(0)
-
-      local result = {}
-      if not bestSolution then
-        return buildFallback(component), true
-      end
-      for i = 1, table.getn(bestSolution) do
-        local rect = bestSolution[i]
-        local x1 = xs[rect.x1Index]
-        local x2 = xs[rect.x2Index]
-        local y1 = ys[rect.y1Index]
-        local y2 = ys[rect.y2Index]
-        table.insert(result, {
-          x = x1,
-          y = y1,
-          w = x2 - x1,
-          h = y2 - y1,
-          name = pickName(x1, y1, x2, y2)
-        })
-      end
-      return result, aborted
     end
 
-    local combined = {}
-    local anyAborted = false
-    if table.getn(components) == 0 then
-      return cloneValid(valid)
-    end
-    for ci = 1, table.getn(components) do
-      local rectList, aborted = coverComponent(components[ci])
-      if aborted then anyAborted = true end
-      for ri = 1, table.getn(rectList) do
-        table.insert(combined, rectList[ri])
-      end
-    end
     if table.getn(combined) == 0 then
       return cloneValid(valid)
     end
-    if anyAborted and table.getn(combined) > table.getn(valid) then
-      return cloneValid(valid)
+
+    local function mergeRectList(list)
+      local changed = true
+      while changed do
+        changed = false
+        local n = table.getn(list)
+        if n <= 1 then break end
+        for i = 1, n - 1 do
+          local a = list[i]
+          if a then
+            for j = i + 1, n do
+              local b = list[j]
+              if b then
+                if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) then
+                  if nearlyEqual(a.x + a.w, b.x) or nearlyEqual(b.x + b.w, a.x) then
+                    local x1 = math.min(a.x, b.x)
+                    local x2 = math.max(a.x + a.w, b.x + b.w)
+                    local mergedRect = { x = x1, y = a.y, w = x2 - x1, h = a.h }
+                    local name = pickName(x1, a.y, x2, a.y + a.h)
+                    mergedRect.name = name or a.name or b.name or "CUSTOM"
+                    list[i] = mergedRect
+                    list[j] = list[n]
+                    list[n] = nil
+                    changed = true
+                    break
+                  end
+                end
+                if nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) then
+                  if nearlyEqual(a.y + a.h, b.y) or nearlyEqual(b.y + b.h, a.y) then
+                    local y1 = math.min(a.y, b.y)
+                    local y2 = math.max(a.y + a.h, b.y + b.h)
+                    local mergedRect = { x = a.x, y = y1, w = a.w, h = y2 - y1 }
+                    local name = pickName(a.x, y1, a.x + a.w, y2)
+                    mergedRect.name = name or a.name or b.name or "CUSTOM"
+                    list[i] = mergedRect
+                    list[j] = list[n]
+                    list[n] = nil
+                    changed = true
+                    break
+                  end
+                end
+              end
+            end
+          end
+          if changed then break end
+        end
+      end
     end
+
+    mergeRectList(combined)
+
+    table.sort(combined, function(a, b)
+      if not nearlyEqual(a.y, b.y) then
+        return a.y < b.y
+      end
+      if not nearlyEqual(a.x, b.x) then
+        return a.x < b.x
+      end
+      if not nearlyEqual(a.h, b.h) then
+        return a.h < b.h
+      end
+      return a.w < b.w
+    end)
+
     return combined
   end
-
   function Extras:CombineSessionHotspots(mapId)
     local targets = {}
     if mapId ~= nil then
