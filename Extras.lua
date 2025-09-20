@@ -1140,16 +1140,13 @@ local function TryInit()
 
   function Extras:_CombineAxisAlignedRects(rects)
     local EPS = 0.0001
-    local SCALE = 10000
-    local function key(v)
-      return tostring(math.floor(v * SCALE + 0.5))
-    end
-    local function addUnique(list, value)
-      if not value then return end
+    local function cloneValid(list)
+      local copy = {}
       for i = 1, table.getn(list) do
-        if math.abs(list[i] - value) < EPS then return end
+        local r = list[i]
+        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
       end
-      table.insert(list, value)
+      return copy
     end
     local valid = {}
     for i = 1, table.getn(rects or {}) do
@@ -1165,149 +1162,73 @@ local function TryInit()
       end
     end
     if table.getn(valid) == 0 then return {} end
-    local xs, ys = {}, {}
-    for i = 1, table.getn(valid) do
-      local r = valid[i]
-      addUnique(xs, r.x)
-      addUnique(xs, r.x + r.w)
-      addUnique(ys, r.y)
-      addUnique(ys, r.y + r.h)
-    end
-    local function spansOverlap(a1, a2, b1, b2)
-      return not (a2 <= b1 + EPS or b2 <= a1 + EPS)
-    end
-    local function spanContains(a1, a2, b1, b2)
-      return (a1 <= b1 + EPS) and (a2 >= b2 - EPS)
-    end
-    local function canMergeSafeRect(A, B)
-      local ax1, ax2 = A.x, A.x + A.w
-      local bx1, bx2 = B.x, B.x + B.w
-      local ay1, ay2 = A.y, A.y + A.h
-      local by1, by2 = B.y, B.y + B.h
-      if spanContains(ax1, ax2, bx1, bx2) and spanContains(ay1, ay2, by1, by2) then
-        return true, ax1, ay1, ax2 - ax1, ay2 - ay1
-      end
-      if spanContains(bx1, bx2, ax1, ax2) and spanContains(by1, by2, ay1, ay2) then
-        return true, bx1, by1, bx2 - bx1, by2 - by1
-      end
-      if spansOverlap(ax1, ax2, bx1, bx2) and (spanContains(ay1, ay2, by1, by2) or spanContains(by1, by2, ay1, ay2)) then
-        local x1 = (ax1 < bx1) and ax1 or bx1
-        local x2 = (ax2 > bx2) and ax2 or bx2
-        local y1 = (ay1 < by1) and ay1 or by1
-        local y2 = (ay2 > by2) and ay2 or by2
-        return true, x1, y1, x2 - x1, y2 - y1
-      end
-      if spansOverlap(ay1, ay2, by1, by2) and (spanContains(ax1, ax2, bx1, bx2) or spanContains(bx1, bx2, ax1, ax2)) then
-        local x1 = (ax1 < bx1) and ax1 or bx1
-        local x2 = (ax2 > bx2) and ax2 or bx2
-        local y1 = (ay1 < by1) and ay1 or by1
-        local y2 = (ay2 > by2) and ay2 or by2
-        return true, x1, y1, x2 - x1, y2 - y1
-      end
-      return false
-    end
-    local function pairwiseMerge(list)
-      local out = {}
-      for i = 1, table.getn(list) do
-        local r = list[i]
-        out[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
-      end
-      local changed = true
-      while changed do
-        changed = false
-        local i = 1
-        while i <= table.getn(out) do
-          local a = out[i]
-          local j = i + 1
-          local merged = false
-          while j <= table.getn(out) do
-            local b = out[j]
-            local ok, nx, ny, nw, nh = canMergeSafeRect(a, b)
-            if not ok then
-              if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) and (nearlyEqual(a.x + a.w, b.x) or nearlyEqual(b.x + b.w, a.x)) then
-                ok = true
-                nx = (a.x < b.x) and a.x or b.x
-                ny = a.y
-                nw = (a.x + a.w > b.x + b.w) and (a.x + a.w - nx) or (b.x + b.w - nx)
-                nh = a.h
-              elseif nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) and (nearlyEqual(a.y + a.h, b.y) or nearlyEqual(b.y + b.h, a.y)) then
-                ok = true
-                nx = a.x
-                ny = (a.y < b.y) and a.y or b.y
-                nw = a.w
-                nh = (a.y + a.h > b.y + b.h) and (a.y + a.h - ny) or (b.y + b.h - ny)
-              end
-            end
-            if ok then
-              a.x, a.y, a.w, a.h = nx, ny, nw, nh
-              if not a.name or a.name == "" then a.name = b.name end
-              table.remove(out, j)
-              changed = true; merged = true
-              break
-            else
-              j = j + 1
-            end
-          end
-          if not merged then i = i + 1 end
-        end
-      end
-      return out
-    end
 
-    valid = pairwiseMerge(valid)
-    xs, ys = {}, {}
-    for i = 1, table.getn(valid) do
-      local r = valid[i]
-      addUnique(xs, r.x); addUnique(xs, r.x + r.w)
-      addUnique(ys, r.y); addUnique(ys, r.y + r.h)
-    end
-
-    if table.getn(xs) < 2 or table.getn(ys) < 2 then
-      local copy = {}
+    local function collectEdges()
+      local xs, ys = {}, {}
       for i = 1, table.getn(valid) do
         local r = valid[i]
-        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
+        table.insert(xs, r.x)
+        table.insert(xs, r.x + r.w)
+        table.insert(ys, r.y)
+        table.insert(ys, r.y + r.h)
       end
-      return copy
+      local function dedupe(sorted)
+        table.sort(sorted)
+        local unique = {}
+        for i = 1, table.getn(sorted) do
+          local v = sorted[i]
+          if table.getn(unique) == 0 or math.abs(v - unique[table.getn(unique)]) > EPS then
+            table.insert(unique, v)
+          end
+        end
+        return unique
+      end
+      return dedupe(xs), dedupe(ys)
     end
-    table.sort(xs)
-    table.sort(ys)
-    local xIndex, yIndex = {}, {}
-    for i = 1, table.getn(xs) do xIndex[key(xs[i])] = i end
-    for i = 1, table.getn(ys) do yIndex[key(ys[i])] = i end
-    local function findIndex(arr, idxMap, v)
-      local k = key(v)
-      local idx = idxMap[k]
-      if idx then return idx end
-      local bestD, bestI
-      for j = 1, table.getn(arr) do
-        local d = math.abs(arr[j] - v)
-        if not bestD or d < bestD then bestD = d; bestI = j end
+
+    local xs, ys = collectEdges()
+    if table.getn(xs) < 2 or table.getn(ys) < 2 then
+      return cloneValid(valid)
+    end
+
+    local function findIndex(arr, value)
+      for i = 1, table.getn(arr) do
+        if math.abs(arr[i] - value) <= EPS then
+          return i
+        end
       end
-      if bestD and bestD < (EPS * 25) then return bestI end
+      local bestIdx, bestDelta
+      for i = 1, table.getn(arr) do
+        local delta = math.abs(arr[i] - value)
+        if not bestDelta or delta < bestDelta then
+          bestDelta = delta
+          bestIdx = i
+        end
+      end
+      if bestDelta and bestDelta <= (EPS * 10) then
+        return bestIdx
+      end
       return nil
     end
+
     local filled = {}
     for i = 1, table.getn(valid) do
       local r = valid[i]
-      local x1 = r.x
-      local x2 = r.x + r.w
-      local y1 = r.y
-      local y2 = r.y + r.h
-      local ix1 = findIndex(xs, xIndex, x1)
-      local ix2 = findIndex(xs, xIndex, x2)
-      local iy1 = findIndex(ys, yIndex, y1)
-      local iy2 = findIndex(ys, yIndex, y2)
-      if ix1 and ix2 and iy1 and iy2 and ix2 > ix1 and iy2 > iy1 then
-        for iy = iy1, iy2 - 1 do
-          local row = filled[iy]
-          if not row then row = {}; filled[iy] = row end
-          for ix = ix1, ix2 - 1 do
-            row[ix] = true
+      local x1Index = findIndex(xs, r.x)
+      local x2Index = findIndex(xs, r.x + r.w)
+      local y1Index = findIndex(ys, r.y)
+      local y2Index = findIndex(ys, r.y + r.h)
+      if x1Index and x2Index and y1Index and y2Index and x2Index > x1Index and y2Index > y1Index then
+        for yIndex = y1Index, y2Index - 1 do
+          local row = filled[yIndex]
+          if not row then row = {}; filled[yIndex] = row end
+          for xIndex = x1Index, x2Index - 1 do
+            row[xIndex] = true
           end
         end
       end
     end
+
     local function pickName(x1, y1, x2, y2)
       for i = 1, table.getn(valid) do
         local src = valid[i]
@@ -1321,196 +1242,162 @@ local function TryInit()
       end
       return "CUSTOM"
     end
+
     local final = {}
     local active = {}
-    local xCount = table.getn(xs)
-    local yCount = table.getn(ys)
-    for iy = 1, yCount - 1 do
-      local row = filled[iy] or {}
+    local xCells = table.getn(xs) - 1
+    local yCells = table.getn(ys) - 1
+
+    for yIndex = 1, yCells do
+      local row = filled[yIndex] or {}
       local segments = {}
-      local segStart = nil
-      for ix = 1, xCount - 1 do
-        if row[ix] then
-          if not segStart then segStart = ix end
-        else
-          if segStart then
-            table.insert(segments, { ix1 = segStart, ix2 = ix })
-            segStart = nil
+      local col = 1
+      while col <= xCells do
+        if row[col] then
+          local startCol = col
+          col = col + 1
+          while col <= xCells and row[col] do
+            col = col + 1
           end
+          table.insert(segments, { x1 = startCol, x2 = col })
+        else
+          col = col + 1
         end
       end
-      if segStart then
-        table.insert(segments, { ix1 = segStart, ix2 = xCount })
-        segStart = nil
-      end
+
       local used = {}
-      local newActive = {}
+      local nextActive = {}
       for s = 1, table.getn(segments) do
         local seg = segments[s]
         local match = nil
         for a = 1, table.getn(active) do
           local rect = active[a]
-          if rect.ix1 == seg.ix1 and rect.ix2 == seg.ix2 then
+          if rect.x1 == seg.x1 and rect.x2 == seg.x2 then
             match = a
             break
           end
         end
         if match then
           local rect = active[match]
-          rect.y2 = ys[iy + 1]
-          table.insert(newActive, rect)
+          rect.y2 = yIndex + 1
+          table.insert(nextActive, rect)
           used[match] = true
         else
-          local x1 = xs[seg.ix1]
-          local x2 = xs[seg.ix2]
-          local y1 = ys[iy]
-          local y2 = ys[iy + 1]
-          if (x2 - x1) > EPS and (y2 - y1) > EPS then
-            table.insert(newActive, {
-              ix1 = seg.ix1,
-              ix2 = seg.ix2,
-              y1 = y1,
-              y2 = y2,
-              name = pickName(x1, y1, x2, y2)
-            })
-          end
+          table.insert(nextActive, {
+            x1 = seg.x1,
+            x2 = seg.x2,
+            y1 = yIndex,
+            y2 = yIndex + 1
+          })
         end
       end
+
       for a = 1, table.getn(active) do
         if not used[a] then
           local rect = active[a]
-          local x1 = xs[rect.ix1]
-          local x2 = xs[rect.ix2]
-          local y1 = rect.y1
-          local y2 = rect.y2
+          local x1 = xs[rect.x1]
+          local x2 = xs[rect.x2]
+          local y1 = ys[rect.y1]
+          local y2 = ys[rect.y2]
           if (x2 - x1) > EPS and (y2 - y1) > EPS then
             table.insert(final, {
               x = x1,
               y = y1,
               w = x2 - x1,
               h = y2 - y1,
-              name = rect.name or pickName(x1, y1, x2, y2)
+              name = pickName(x1, y1, x2, y2)
             })
           end
         end
       end
-      active = newActive
+
+      active = nextActive
     end
+
     for a = 1, table.getn(active) do
       local rect = active[a]
-      local x1 = xs[rect.ix1]
-      local x2 = xs[rect.ix2]
-      local y1 = rect.y1
-      local y2 = rect.y2
+      local x1 = xs[rect.x1]
+      local x2 = xs[rect.x2]
+      local y1 = ys[rect.y1]
+      local y2 = ys[rect.y2]
       if (x2 - x1) > EPS and (y2 - y1) > EPS then
         table.insert(final, {
           x = x1,
           y = y1,
           w = x2 - x1,
           h = y2 - y1,
-          name = rect.name or pickName(x1, y1, x2, y2)
+          name = pickName(x1, y1, x2, y2)
         })
       end
     end
-    local function mergeAdjacent(list)
+
+    local function mergeAdjacency(list)
       local changed = true
       while changed do
         changed = false
-        local n = table.getn(list)
         local i = 1
-        while i <= n do
+        while i <= table.getn(list) do
           local a = list[i]
           local j = i + 1
-          local mergedPair = false
-          while j <= n do
+          while j <= table.getn(list) do
             local b = list[j]
-            if a and b then
-              -- Horizontal adjacency: same y-span, touching on X edges
-              if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) then
-                if nearlyEqual(a.x + a.w, b.x) then
-                  a.w = (b.x + b.w) - a.x
-                  if not a.name or a.name == "" then a.name = b.name end
-                  table.remove(list, j)
-                  n = n - 1
-                  changed = true; mergedPair = true
-                  break
-                elseif nearlyEqual(b.x + b.w, a.x) then
-                  local newx = b.x
-                  a.w = (a.x + a.w) - newx
-                  a.x = newx
-                  if not a.name or a.name == "" then a.name = b.name end
-                  table.remove(list, j)
-                  n = n - 1
-                  changed = true; mergedPair = true
-                  break
-                end
+            local ax1 = a.x
+            local ax2 = a.x + a.w
+            local ay1 = a.y
+            local ay2 = a.y + a.h
+            local bx1 = b.x
+            local bx2 = b.x + b.w
+            local by1 = b.y
+            local by2 = b.y + b.h
+            local merged = false
+            if math.abs(ay1 - by1) <= EPS and math.abs(ay2 - by2) <= EPS then
+              if math.abs(ax2 - bx1) <= EPS then
+                a.w = bx2 - ax1
+                if not a.name or a.name == "" then a.name = b.name end
+                table.remove(list, j)
+                changed = true
+                merged = true
+              elseif math.abs(bx2 - ax1) <= EPS then
+                a.w = ax2 - bx1
+                a.x = bx1
+                if not a.name or a.name == "" then a.name = b.name end
+                table.remove(list, j)
+                changed = true
+                merged = true
               end
-              -- Vertical adjacency: same x-span, touching on Y edges
-              if nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) then
-                if nearlyEqual(a.y + a.h, b.y) then
-                  a.h = (b.y + b.h) - a.y
-                  if not a.name or a.name == "" then a.name = b.name end
-                  table.remove(list, j)
-                  n = n - 1
-                  changed = true; mergedPair = true
-                  break
-                elseif nearlyEqual(b.y + b.h, a.y) then
-                  local newy = b.y
-                  a.h = (a.y + a.h) - newy
-                  a.y = newy
-                  if not a.name or a.name == "" then a.name = b.name end
-                  table.remove(list, j)
-                  n = n - 1
-                  changed = true; mergedPair = true
-                  break
-                end
+            elseif math.abs(ax1 - bx1) <= EPS and math.abs(ax2 - bx2) <= EPS then
+              if math.abs(ay2 - by1) <= EPS then
+                a.h = by2 - ay1
+                if not a.name or a.name == "" then a.name = b.name end
+                table.remove(list, j)
+                changed = true
+                merged = true
+              elseif math.abs(by2 - ay1) <= EPS then
+                a.h = ay2 - by1
+                a.y = by1
+                if not a.name or a.name == "" then a.name = b.name end
+                table.remove(list, j)
+                changed = true
+                merged = true
               end
             end
-            j = j + 1
+            if merged then
+              break
+            else
+              j = j + 1
+            end
           end
-          if not mergedPair then i = i + 1 end
+          i = i + 1
         end
       end
       return list
     end
-    final = mergeAdjacent(final)
 
-    -- Post-pass 2: safe overlap/containment merges into bounding box.
-    -- Only merge when one axis' span contains the other's (or full containment), ensuring union is a rectangle.
-    local changed = true
-    while changed do
-      changed = false
-      local i = 1
-      while i <= table.getn(final) do
-        local a = final[i]
-        local j = i + 1
-        local mergedAny = false
-        while j <= table.getn(final) do
-          local b = final[j]
-          local ok, nx, ny, nw, nh = canMergeSafeRect(a, b)
-          if ok then
-            a.x, a.y, a.w, a.h = nx, ny, nw, nh
-            if not a.name or a.name == "" then a.name = b.name end
-            table.remove(final, j)
-            changed = true; mergedAny = true
-            break
-          else
-            j = j + 1
-          end
-        end
-        if not mergedAny then i = i + 1 end
-      end
+    local combined = mergeAdjacency(final)
+    if table.getn(combined) == 0 then
+      return cloneValid(valid)
     end
-    if table.getn(final) == 0 and table.getn(valid) > 0 then
-      -- Fallback to pre-merged exact pairwise result if grid extraction failed to yield rectangles
-      local copy = {}
-      for i = 1, table.getn(valid) do
-        local r = valid[i]
-        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
-      end
-      return copy
-    end
-    return final
+    return combined
   end
 
   function Extras:CombineSessionHotspots(mapId)
