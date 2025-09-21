@@ -1290,6 +1290,43 @@ local function TryInit()
     end
   end
 
+  function Extras:UndoLastDraw()
+    local entry = table.remove(self.undoStack)
+    if not entry then
+      msg("Undo: nothing to remove.")
+      return
+    end
+
+    local mapId = entry.mapId
+    local planned = entry.count or 0
+    local removed = 0
+    if mapId and planned > 0 then
+      local list = self.sessionEdits[mapId]
+      if list then
+        local total = table.getn(list)
+        if total > 0 then
+          local toRemove = planned
+          if toRemove > total then toRemove = total end
+          if toRemove > 0 then
+            for i = total, total - toRemove + 1, -1 do
+              list[i] = nil
+            end
+            removed = toRemove
+          end
+        end
+      end
+    end
+
+    if removed > 0 then
+      self:LoadFileHotspots(); self:RebuildSessionSpots(); self:DrawOverlays(); self:RefreshEditorList()
+      if isFunc(self.RefreshCurrentMap) then self:RefreshCurrentMap("Extras undo") end
+    end
+
+    local name = mapId and GM.Map and GM.Map.Area and GM.Map.Area[mapId] and GM.Map.Area[mapId].name
+    name = name or (mapId and tostring(mapId)) or "?"
+    msg(string.format("Undo: removed %d hotspot span%s from %s", removed, removed == 1 and "" or "s", name))
+  end
+
   -- Editor enable/disable
   function Extras:SetEditorEnabled(enabled)
     if not devEnabled then return end
