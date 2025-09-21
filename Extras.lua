@@ -51,6 +51,58 @@ local function TryInit()
     return math.abs(a - b) < 0.0001
   end
 
+  local function HideFrameWithFunc(frame, hideFunc)
+    if not frame then return end
+    if hideFunc then
+      hideFunc(frame)
+    elseif frame.Hide then
+      frame:Hide()
+    end
+  end
+
+  function Extras:_EnsureFrameSuppressor()
+    if self._frameSuppressor then return self._frameSuppressor end
+    local waiter = CreateFrame("Frame")
+    waiter:Hide()
+    waiter.targets = {}
+    waiter._handler = function(w)
+      local list = w.targets or {}
+      local keep = {}
+      for i = 1, table.getn(list) do
+        local entry = list[i]
+        local fr = entry.frame
+        if fr then
+          HideFrameWithFunc(fr, entry.hideFunc)
+          entry.tries = (entry.tries or 0) + 1
+          if fr.IsVisible and fr:IsVisible() and entry.tries < 5 then
+            table.insert(keep, entry)
+          end
+        end
+      end
+      if table.getn(keep) > 0 then
+        w.targets = keep
+      else
+        w.targets = {}
+        w:SetScript("OnUpdate", nil)
+        w:Hide()
+      end
+    end
+    self._frameSuppressor = waiter
+    return waiter
+  end
+
+  function Extras:_SuppressFrameShow(frame, wasVisible, hideFunc)
+    if not frame or wasVisible then return end
+    HideFrameWithFunc(frame, hideFunc)
+    if frame.IsVisible and frame:IsVisible() then
+      local waiter = self:_EnsureFrameSuppressor()
+      waiter.targets = waiter.targets or {}
+      table.insert(waiter.targets, { frame = frame, hideFunc = hideFunc, tries = 0 })
+      waiter:SetScript("OnUpdate", waiter._handler)
+      waiter:Show()
+    end
+  end
+
   -- Utility: throttle any target method by Hz and/or a state key
   -- changedFn(target) should return a string key representing state; if nil, only time is used
   function Extras:WrapThrottle(target, methodName, hz, changedFn)
@@ -89,22 +141,33 @@ local function TryInit()
     if not mapId then return end
     local suppress = opts and opts.suppressOverlay
     local force = opts and opts.force
-    local mapFrame, overlayFrame, worldMapFrame
-    local wasMapVisible, wasOverlayVisible, wasWorldMapVisible
+    local mapFrame, overlayFrame, worldMapFrame, zoneMapFrame
+    local wasMapVisible, wasOverlayVisible, wasWorldMapVisible, wasZoneMapVisible
     if suppress then
       mapFrame = GM.frame
       overlayFrame = GM.Overlay and GM.Overlay.frame
       worldMapFrame = _G.WorldMapFrame
+      zoneMapFrame = _G.BattlefieldMinimap or _G.ZoneMapFrame or _G.MiniWorldMapFrame
       wasMapVisible = mapFrame and mapFrame:IsVisible()
       wasOverlayVisible = overlayFrame and overlayFrame:IsVisible()
       wasWorldMapVisible = worldMapFrame and worldMapFrame:IsVisible()
+      wasZoneMapVisible = zoneMapFrame and zoneMapFrame:IsVisible()
     end
     local Map = GM.Map
     local current = self:GetSelectedMapId() or (Map and Map.mapId)
     if current and mapId == current and not force then
       if suppress then
-        if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
-        if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
+        Extras:_SuppressFrameShow(mapFrame, wasMapVisible)
+        Extras:_SuppressFrameShow(overlayFrame, wasOverlayVisible)
+        if worldMapFrame then
+          Extras:_SuppressFrameShow(worldMapFrame, wasWorldMapVisible, function(frame)
+            if isFunc(_G.HideUIPanel) then _G.HideUIPanel(frame) end
+            if frame.Hide then frame:Hide() end
+          end)
+        end
+        if zoneMapFrame then
+          Extras:_SuppressFrameShow(zoneMapFrame, wasZoneMapVisible)
+        end
       end
       return
     end
@@ -123,10 +186,16 @@ local function TryInit()
       _G.pfMap:UpdateNodes()
     end
     if suppress then
-      if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
-      if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
-      if worldMapFrame and not wasWorldMapVisible and worldMapFrame:IsVisible() then
-        if isFunc(_G.HideUIPanel) then _G.HideUIPanel(worldMapFrame) else worldMapFrame:Hide() end
+      Extras:_SuppressFrameShow(mapFrame, wasMapVisible)
+      Extras:_SuppressFrameShow(overlayFrame, wasOverlayVisible)
+      if worldMapFrame then
+        Extras:_SuppressFrameShow(worldMapFrame, wasWorldMapVisible, function(frame)
+          if isFunc(_G.HideUIPanel) then _G.HideUIPanel(frame) end
+          if frame.Hide then frame:Hide() end
+        end)
+      end
+      if zoneMapFrame then
+        Extras:_SuppressFrameShow(zoneMapFrame, wasZoneMapVisible)
       end
     end
   end
