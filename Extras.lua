@@ -830,24 +830,32 @@ local function TryInit()
       local fz = self.fileZones[mapId] or {}
       for i = 1, table.getn(fz) do
         local r = fz[i]
-        table.insert(list, { mapId = mapId, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "file" })
+        if r then
+          table.insert(list, { mapId = mapId, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "file" })
+        end
       end
       local sz = self.sessionEdits[mapId] or {}
       for i = 1, table.getn(sz) do
         local r = sz[i]
-        table.insert(list, { mapId = mapId, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "session", index = i })
+        if r then
+          table.insert(list, { mapId = mapId, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "session", index = i })
+        end
       end
     else
       for mid, fz in pairs(self.fileZones) do
         for i = 1, table.getn(fz) do
           local r = fz[i]
-          table.insert(list, { mapId = mid, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "file" })
+          if r then
+            table.insert(list, { mapId = mid, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "file" })
+          end
         end
       end
       for mid, sz in pairs(self.sessionEdits) do
         for i = 1, table.getn(sz) do
           local r = sz[i]
-          table.insert(list, { mapId = mid, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "session", index = i })
+          if r then
+            table.insert(list, { mapId = mid, x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM", source = "session", index = i })
+          end
         end
       end
     end
@@ -1437,9 +1445,9 @@ local function TryInit()
           if toRemove > total then toRemove = total end
           if toRemove > 0 then
             for i = total, total - toRemove + 1, -1 do
-              list[i] = nil
+              table.remove(list, i)
+              removed = removed + 1
             end
-            removed = toRemove
           end
         end
       end
