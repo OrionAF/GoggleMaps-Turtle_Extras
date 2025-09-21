@@ -230,7 +230,7 @@ GoggleMaps.CustomHotspots = {
   -- Zul'Gurub
   [60012] = "",
   -- Alterac Valley
-  [70001] = "",
+  [70001] = "27.45^7.49^28.94^26.2^DUNBALDAR~37.92^34.43^21.96^29.94^ICEBLOODGARRISON~43.41^63.62^16.97^29.19^FROSTWOLFKEEP",
   -- Arathi Basin
   [70002] = "",
   -- Warsong Gulch
