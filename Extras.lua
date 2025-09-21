@@ -277,6 +277,7 @@ local function TryInit()
           msg("Hotspot overlay: ON (current continent)")
         end
       end
+      Extras:MarkOverlayDirty()
       Extras:DrawOverlays()
       return true
     elseif cmd == "drawzone" or cmd == "dz" then
@@ -385,6 +386,35 @@ local function TryInit()
   Extras.frames = Extras.state.frames             -- overlay frames for debug
   Extras.undoStack = Extras.state.undoStack       -- stack of draw actions for undo
   Extras.previewFrames = {}
+  Extras._overlayActiveFrames = Extras._overlayActiveFrames or {}
+  Extras._overlayTouched = Extras._overlayTouched or {}
+  Extras._overlayDirty = true
+  Extras._overlayDirtySeq = Extras._overlayDirtySeq or 0
+
+  function Extras:MarkOverlayDirty()
+    self._overlayDirty = true
+    self._overlayDirtySeq = (self._overlayDirtySeq or 0) + 1
+  end
+
+  local function overlayMapContext()
+    local mapId
+    if GM.Map then
+      mapId = GM.Map.realMapId or GM.Map.mapId
+    end
+    local continentId
+    if mapId and GM.Utils and isFunc(GM.Utils.getContinentId) then
+      continentId = GM.Utils.getContinentId(mapId)
+    end
+    return mapId, continentId
+  end
+
+  function Extras:_OverlayThrottleKey()
+    local mapId, continentId = overlayMapContext()
+    local show = self.showAllHotspots and 1 or 0
+    local showAll = self.showAllHotspotsAll and 1 or 0
+    local rev = self._overlayDirtySeq or 0
+    return string.format("%s:%s:%d:%d:%d", tostring(mapId or "-"), tostring(continentId or "-"), show, showAll, rev)
+  end
 
   local function worldRect(mapId, x, y, w, h)
     local x1, y1 = GM.Utils.GetWorldPos(mapId, x, y)
@@ -411,6 +441,7 @@ local function TryInit()
       self.customSpots[mapId] = (self.customSpots[mapId] or {})
       for _, r in ipairs(world) do table.insert(self.customSpots[mapId], r) end
     end
+    self:MarkOverlayDirty()
   end
 
   function Extras:RebuildSessionSpots()
@@ -421,6 +452,7 @@ local function TryInit()
         table.insert(self.customSpots[mapId], { x1 = x1, y1 = y1, x2 = x2, y2 = y2 })
       end
     end
+    self:MarkOverlayDirty()
   end
 
   -- Overlay visualizer (simple)
@@ -497,49 +529,92 @@ local function TryInit()
   end
 
   function Extras:DrawOverlays()
-    local shown = 0
-    local touched = {}
+    local mapId, continentId = overlayMapContext()
+    local stateKey = self:_OverlayThrottleKey()
+    local stateChanged = (self._overlayLastStateKey ~= stateKey)
 
-    local function shouldDrawMap(mapId)
-      if Extras.showAllHotspotsAll then return true end
-      local currentMap = GM.Map and (GM.Map.realMapId or GM.Map.mapId)
-      if not currentMap then return false end
-      return GM.Utils.getContinentId(mapId) == GM.Utils.getContinentId(currentMap)
+    if not stateChanged and not self._overlayDirty then
+      return
     end
 
-    if self.showAllHotspots then
-      -- Show ONLY Extras custom hotspots (file + session)
-      for mapId, list in pairs(self.customSpots) do
-        if shouldDrawMap(mapId) then
-          for i, r in ipairs(list) do
-            local key = "custom:" .. mapId .. ":" .. i
-            local fr = getRectFrame(key)
-            if GM.Overlay:ClipFrame(fr, r.x1, r.y1, (r.x2 - r.x1), (r.y2 - r.y1)) then
-              fr.texture:SetVertexColor(1, 0, 0, 0.28)
-              fr:Show(); shown = shown + 1
-            else fr:Hide() end
+    self._overlayLastStateKey = stateKey
+
+    local active = self._overlayActiveFrames or {}
+
+    if not self.showAllHotspots then
+      if overlay:IsShown() then overlay:Hide() end
+      for key in pairs(active) do
+        local fr = self.frames[key]
+        if fr then fr:Hide() end
+        active[key] = nil
+      end
+      self._overlayActiveFrames = active
+      self._overlayDirty = false
+      return
+    end
+
+    local overlayApi = GM.Overlay
+    if not overlayApi or not isFunc(overlayApi.ClipFrame) then
+      self._overlayDirty = false
+      return
+    end
+
+    local shown = 0
+    local touched = self._overlayTouched or {}
+    for k in pairs(touched) do touched[k] = nil end
+    self._overlayTouched = touched
+
+    local function shouldDrawMap(targetMapId)
+      if Extras.showAllHotspotsAll then return true end
+      if not targetMapId then return false end
+      local currentMap = mapId or (GM.Map and (GM.Map.realMapId or GM.Map.mapId))
+      if not currentMap then return false end
+      if GM.Utils and isFunc(GM.Utils.getContinentId) then
+        local currentCont = continentId or GM.Utils.getContinentId(currentMap)
+        local targetCont = GM.Utils.getContinentId(targetMapId)
+        if currentCont and targetCont then
+          return currentCont == targetCont
+        end
+      end
+      return targetMapId == currentMap
+    end
+
+    for mapKey, list in pairs(self.customSpots) do
+      if shouldDrawMap(mapKey) then
+        for i, r in ipairs(list) do
+          local key = "custom:" .. mapKey .. ":" .. i
+          local fr = getRectFrame(key)
+          if overlayApi:ClipFrame(fr, r.x1, r.y1, (r.x2 - r.x1), (r.y2 - r.y1)) then
+            fr.texture:SetVertexColor(1, 0, 0, 0.28)
+            fr:Show(); shown = shown + 1
             touched[key] = true
+          else
+            fr:Hide()
           end
         end
       end
-      -- Ensure any old hotspot frames are hidden when no longer in use
-      for key, fr in pairs(self.frames) do
-        local prefix = string.sub(key or "", 1, 7)
-        if ((prefix == "custom:" or string.sub(prefix, 1, 3) == "hs:") and not touched[key]) then
-          fr:Hide()
-        end
-      end
-    else
-      -- Hide all hotspot frames when overlay is off
-      for key, fr in pairs(self.frames) do
-        if string.sub(key or "", 1, 3) == "hs:" or string.sub(key or "", 1, 7) == "custom:" then
-          fr:Hide()
-        end
+    end
+
+    for key in pairs(active) do
+      if not touched[key] then
+        local fr = self.frames[key]
+        if fr then fr:Hide() end
+        active[key] = nil
       end
     end
 
+    for key in pairs(touched) do
+      active[key] = true
+    end
+    self._overlayActiveFrames = active
+
     if shown > 0 then overlay:Show() else overlay:Hide() end
+    self._overlayDirty = false
   end
+
+  Extras:WrapThrottle(Extras, "DrawOverlays", 12, function(self)
+    return self:_OverlayThrottleKey()
+  end)
 
 
 
@@ -931,7 +1006,7 @@ local function TryInit()
       hsOff:ClearAllPoints(); hsOff:SetPoint("LEFT", editBtn, "RIGHT", 6, 0)
       hsOff:SetText("HS: Off")
       hsOff:SetScript("OnClick", function()
-        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
+        Extras.showAllHotspots = false; Extras.showAllHotspotsAll = false; Extras:MarkOverlayDirty(); Extras:DrawOverlays(); Extras:Print("Hotspot overlay: OFF")
       end)
 
       -- Hotspot overlay buttons (Extras only)
@@ -940,7 +1015,7 @@ local function TryInit()
       hsAll:ClearAllPoints(); hsAll:SetPoint("LEFT", hsOff, "RIGHT", 6, 0)
       hsAll:SetText("HS: All")
       hsAll:SetScript("OnClick", function()
-        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
+        Extras.showAllHotspots = true; Extras.showAllHotspotsAll = true; Extras:MarkOverlayDirty(); Extras:DrawOverlays(); Extras:Print("Hotspot overlay: ON (all)")
       end)
 
       -- All maps toggle
@@ -1141,85 +1216,138 @@ local function TryInit()
   function Extras:_CombineAxisAlignedRects(rects)
     local EPS = 0.0001 -- Tolerance for floating point comparisons
 
-    -- Create a deep copy of the input rects to filter out malformed ones.
     local rectList = {}
     for i = 1, table.getn(rects or {}) do
-        local r = rects[i]
-        if r and r.x and r.y and r.w and r.h and r.w > EPS and r.h > EPS then
-            table.insert(rectList, { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" })
-        end
-    end
-
-    if table.getn(rectList) < 2 then
-        return rectList
-    end
-
-    -- In Lua 5.0, we can't use 'goto', so we use a master 'while' loop.
-    -- The loop continues as long as a successful merge was made in the previous pass.
-    local passMadeMerge = true
-    while passMadeMerge do
-      passMadeMerge = false
-
-      local i = 1
-      while i < table.getn(rectList) do
-        local j = i + 1
-        while j <= table.getn(rectList) do
-          local r1 = rectList[i]
-          local r2 = rectList[j]
-          local merged = false
-
-          -- LOGIC 1: ATTEMPT TO MERGE VERTICALLY
-          -- Condition: Perfectly aligned horizontally (same x and width)
-          if nearlyEqual(r1.x, r2.x) and nearlyEqual(r1.w, r2.w) then
-            -- Condition: Touching or overlapping vertically
-            if (r1.y <= r2.y + r2.h + EPS) and (r1.y + r1.h >= r2.y - EPS) then
-              local newY = math.min(r1.y, r2.y)
-              r1.h = math.max(r1.y + r1.h, r2.y + r2.h) - newY
-              r1.y = newY
-              merged = true
-            end
-          end
-
-          -- LOGIC 2: ATTEMPT TO MERGE HORIZONTALLY (if vertical merge failed)
-          -- Condition: Perfectly aligned vertically (same y and height)
-          if not merged and nearlyEqual(r1.y, r2.y) and nearlyEqual(r1.h, r2.h) then
-            -- Condition: Touching or overlapping horizontally
-            if (r1.x <= r2.x + r2.w + EPS) and (r1.x + r1.w >= r2.x - EPS) then
-              local newX = math.min(r1.x, r2.x)
-              r1.w = math.max(r1.x + r1.w, r2.x + r2.w) - newX
-              r1.x = newX
-              merged = true
-            end
-          end
-
-          if merged then
-            table.remove(rectList, j)
-            passMadeMerge = true
-            -- A merge occurred, break both inner loops to restart the main 'while' pass.
-            break
-          else
-            -- No merge, advance the inner loop counter.
-            j = j + 1
-          end
-        end
-
-        if passMadeMerge then
-          -- This is the crucial part that replaces the 'goto'.
-          -- If the inner loop made a merge, we break this outer loop as well
-          -- to let the main 'while' loop start a fresh scan from i=1.
-          break
-        end
-        i = i + 1
+      local r = rects[i]
+      if r and r.x and r.y and r.w and r.h and r.w > EPS and r.h > EPS then
+        table.insert(rectList, { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" })
       end
     end
 
-    -- Optional: Sort final list for deterministic output.
-    table.sort(rectList, function(a, b)
+    local count = table.getn(rectList)
+    if count < 2 then return rectList end
+
+    local function cloneRect(r)
+      return { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name }
+    end
+
+    -- Group by shared edges (same x/w for vertical, same y/h for horizontal)
+    -- and only compare neighbors after sorting. This avoids scanning the
+    -- entire list for each rectangle and keeps the pass close to O(n log n).
+    local function mergePass(input, axis)
+      local total = table.getn(input)
+      if total < 2 then
+        local copy = {}
+        for i = 1, total do copy[i] = cloneRect(input[i]) end
+        return copy, false
+      end
+
+      local sorted = {}
+      for i = 1, total do sorted[i] = input[i] end
+
+      if axis == "vertical" then
+        table.sort(sorted, function(a, b)
+          if not nearlyEqual(a.x, b.x) then return a.x < b.x end
+          if not nearlyEqual(a.w, b.w) then return a.w < b.w end
+          if not nearlyEqual(a.y, b.y) then return a.y < b.y end
+          return a.h < b.h
+        end)
+      else
+        table.sort(sorted, function(a, b)
+          if not nearlyEqual(a.y, b.y) then return a.y < b.y end
+          if not nearlyEqual(a.h, b.h) then return a.h < b.h end
+          if not nearlyEqual(a.x, b.x) then return a.x < b.x end
+          return a.w < b.w
+        end)
+      end
+
+      local mergedAny = false
+      local result = {}
+      local idx = 1
+
+      while idx <= total do
+        local base = sorted[idx]
+        local key1 = (axis == "vertical") and base.x or base.y
+        local key2 = (axis == "vertical") and base.w or base.h
+        local groupEnd = idx
+
+        while groupEnd + 1 <= total do
+          local nextRect = sorted[groupEnd + 1]
+          if axis == "vertical" then
+            if nearlyEqual(nextRect.x, key1) and nearlyEqual(nextRect.w, key2) then
+              groupEnd = groupEnd + 1
+            else
+              break
+            end
+          else
+            if nearlyEqual(nextRect.y, key1) and nearlyEqual(nextRect.h, key2) then
+              groupEnd = groupEnd + 1
+            else
+              break
+            end
+          end
+        end
+
+        local i = idx
+        while i <= groupEnd do
+          local current = cloneRect(sorted[i])
+          i = i + 1
+          while i <= groupEnd do
+            local candidate = sorted[i]
+            local canMerge
+            if axis == "vertical" then
+              canMerge = (current.y <= candidate.y + candidate.h + EPS) and (current.y + current.h >= candidate.y - EPS)
+            else
+              canMerge = (current.x <= candidate.x + candidate.w + EPS) and (current.x + current.w >= candidate.x - EPS)
+            end
+            if not canMerge then break end
+
+            if axis == "vertical" then
+              local newBottom = current.y
+              if candidate.y < newBottom then newBottom = candidate.y end
+              local newTop = current.y + current.h
+              local candTop = candidate.y + candidate.h
+              if candTop > newTop then newTop = candTop end
+              current.y = newBottom
+              current.h = newTop - newBottom
+            else
+              local newLeft = current.x
+              if candidate.x < newLeft then newLeft = candidate.x end
+              local newRight = current.x + current.w
+              local candRight = candidate.x + candidate.w
+              if candRight > newRight then newRight = candRight end
+              current.x = newLeft
+              current.w = newRight - newLeft
+            end
+            mergedAny = true
+            i = i + 1
+          end
+          table.insert(result, current)
+        end
+
+        idx = groupEnd + 1
+      end
+
+      return result, mergedAny
+    end
+
+    local working = rectList
+    local changed = true
+    while changed do
+      changed = false
+      local afterVertical, mergedV = mergePass(working, "vertical")
+      if mergedV then changed = true end
+      local afterHorizontal, mergedH = mergePass(afterVertical, "horizontal")
+      if mergedH then changed = true end
+      working = afterHorizontal
+    end
+
+    table.sort(working, function(a, b)
       if not nearlyEqual(a.y, b.y) then return a.y < b.y end
       return a.x < b.x
     end)
 
-    return rectList
+    return working
   end
   function Extras:CombineSessionHotspots(mapId)
     local targets = {}
