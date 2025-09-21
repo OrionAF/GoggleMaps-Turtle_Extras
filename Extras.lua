@@ -1587,57 +1587,81 @@ local function TryInit()
     end
   end
 
-  -- Fill polygon with a grid of square blocks
+  -- Fill polygon with a grid of square blocks, coalesced into spans per row
   function Extras:FillPolygonAsRects(points, step)
     local rects = {}
     if not points or table.getn(points) < 3 then return rects end
-    step = step or 1.0
+    step = (step and step > 0) and step or 1.0
 
-    -- 1. Calculate the bounding box of the polygon.
+    local function PointInside(px, py)
+      local intersections = 0
+      for i = 1, table.getn(points) do
+        local p1 = points[i]
+        local p2 = points[i + 1]
+        if not p2 then p2 = points[1] end
+        if (p1.y > py) ~= (p2.y > py) then
+          local intersectX = (p2.x - p1.x) * (py - p1.y) / (p2.y - p1.y) + p1.x
+          if px < intersectX then intersections = intersections + 1 end
+        end
+      end
+      return (intersections / 2) ~= math.floor(intersections / 2)
+    end
+
     local minX, maxX = points[1].x, points[1].x
     local minY, maxY = points[1].y, points[1].y
     for i = 2, table.getn(points) do
-      minX = math.min(minX, points[i].x)
-      maxX = math.max(maxX, points[i].x)
-      minY = math.min(minY, points[i].y)
-      maxY = math.max(maxY, points[i].y)
+      local pt = points[i]
+      minX = math.min(minX, pt.x)
+      maxX = math.max(maxX, pt.x)
+      minY = math.min(minY, pt.y)
+      maxY = math.max(maxY, pt.y)
     end
 
-    -- 2. Iterate over the bounding box in a grid defined by the 'step' (PolyRes).
+    -- Track spans from the previous row so we can extend rectangles vertically when they match
+    local prevRowSpans = {}
     local y = minY
     while y < maxY do
+      local spans = {}
       local x = minX
+      local spanStart, spanEnd
       while x < maxX do
-        -- 3. For each block, check if its center point is inside the polygon.
-        -- We use the standard Ray Casting (even-odd) algorithm for this check.
         local testX = x + (step / 2)
         local testY = y + (step / 2)
-        local intersections = 0
-
-        for i = 1, table.getn(points) do
-          local p1 = points[i]
-          local p2 = points[i + 1]
-          if not p2 then p2 = points[1] end -- Ensure the polygon closes by connecting the last point to the first.
-
-          -- Check if the horizontal ray from the test point intersects this polygon edge.
-          -- This checks if the test point's Y is between the edge's start and end Y.
-          if (p1.y > testY) ~= (p2.y > testY) then
-            -- Calculate the X-coordinate of the intersection point.
-            local intersectX = (p2.x - p1.x) * (testY - p1.y) / (p2.y - p1.y) + p1.x
-            -- If the intersection is to the right of our test point, we count it.
-            if testX < intersectX then
-              intersections = intersections + 1
-            end
-          end
+        if PointInside(testX, testY) then
+          if not spanStart then spanStart = x end
+          spanEnd = x + step
+        elseif spanStart then
+          table.insert(spans, { x = spanStart, w = spanEnd - spanStart })
+          spanStart = nil; spanEnd = nil
         end
-
-        -- 4. If the number of intersections is odd, the point is inside. Create a block.
-        if (intersections / 2) ~= math.floor(intersections / 2) then
-          table.insert(rects, { x = x, y = y, w = step, h = step, name = "CUSTOM" })
-        end
-
         x = x + step
       end
+      if spanStart then
+        table.insert(spans, { x = spanStart, w = spanEnd - spanStart })
+      end
+
+      local nextRowSpans = {}
+      for i = 1, table.getn(spans) do
+        local span = spans[i]
+        local rect
+        for j = 1, table.getn(prevRowSpans) do
+          local prev = prevRowSpans[j]
+          if prev and nearlyEqual(prev.x, span.x) and nearlyEqual(prev.w, span.w) then
+            rect = prev.rect
+            prevRowSpans[j] = nil
+            break
+          end
+        end
+        if rect then
+          rect.h = rect.h + step
+        else
+          rect = { x = span.x, y = y, w = span.w, h = step, name = "CUSTOM" }
+          table.insert(rects, rect)
+        end
+        table.insert(nextRowSpans, { x = span.x, w = span.w, rect = rect })
+      end
+
+      prevRowSpans = nextRowSpans
       y = y + step
     end
 
