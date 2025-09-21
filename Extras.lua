@@ -1139,332 +1139,87 @@ local function TryInit()
   end
 
   function Extras:_CombineAxisAlignedRects(rects)
-    local EPS = 0.0001
+    local EPS = 0.0001 -- Tolerance for floating point comparisons
 
-    local function cloneValid(list)
-      local copy = {}
-      for i = 1, table.getn(list) do
-        local r = list[i]
-        copy[i] = { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" }
-      end
-      return copy
-    end
-
-    local valid = {}
+    -- Create a deep copy of the input rects to filter out malformed ones.
+    local rectList = {}
     for i = 1, table.getn(rects or {}) do
-      local r = rects[i]
-      if r then
-        local w = r.w or 0
-        local h = r.h or 0
-        if w > EPS and h > EPS then
-          local x = r.x or 0
-          local y = r.y or 0
-          table.insert(valid, { x = x, y = y, w = w, h = h, name = r.name })
+        local r = rects[i]
+        if r and r.x and r.y and r.w and r.h and r.w > EPS and r.h > EPS then
+            table.insert(rectList, { x = r.x, y = r.y, w = r.w, h = r.h, name = r.name or "CUSTOM" })
         end
-      end
-    end
-    if table.getn(valid) == 0 then return {} end
-
-    local function dedupe(values)
-      table.sort(values)
-      local unique = {}
-      for i = 1, table.getn(values) do
-        local v = values[i]
-        if table.getn(unique) == 0 or math.abs(v - unique[table.getn(unique)]) > EPS then
-          table.insert(unique, v)
-        end
-      end
-      return unique
     end
 
-    local xs, ys = {}, {}
-    for i = 1, table.getn(valid) do
-      local r = valid[i]
-      table.insert(xs, r.x)
-      table.insert(xs, r.x + r.w)
-      table.insert(ys, r.y)
-      table.insert(ys, r.y + r.h)
-    end
-    xs = dedupe(xs)
-    ys = dedupe(ys)
-    if table.getn(xs) < 2 or table.getn(ys) < 2 then
-      return cloneValid(valid)
+    if table.getn(rectList) < 2 then
+        return rectList
     end
 
-    local function findIndex(arr, value)
-      for i = 1, table.getn(arr) do
-        if math.abs(arr[i] - value) <= EPS then
-          return i
-        end
-      end
-      return nil
-    end
+    -- In Lua 5.0, we can't use 'goto', so we use a master 'while' loop.
+    -- The loop continues as long as a successful merge was made in the previous pass.
+    local passMadeMerge = true
+    while passMadeMerge do
+      passMadeMerge = false
 
-    local filled = {}
-    for i = 1, table.getn(valid) do
-      local r = valid[i]
-      local x1Index = findIndex(xs, r.x)
-      local x2Index = findIndex(xs, r.x + r.w)
-      local y1Index = findIndex(ys, r.y)
-      local y2Index = findIndex(ys, r.y + r.h)
-      if not (x1Index and x2Index and y1Index and y2Index and x2Index > x1Index and y2Index > y1Index) then
-        return cloneValid(valid)
-      end
-      for yIndex = y1Index, y2Index - 1 do
-        local row = filled[yIndex]
-        if not row then row = {}; filled[yIndex] = row end
-        for xIndex = x1Index, x2Index - 1 do
-          row[xIndex] = true
-        end
-      end
-    end
+      local i = 1
+      while i < table.getn(rectList) do
+        local j = i + 1
+        while j <= table.getn(rectList) do
+          local r1 = rectList[i]
+          local r2 = rectList[j]
+          local merged = false
 
-    local function pickName(x1, y1, x2, y2)
-      for i = 1, table.getn(valid) do
-        local src = valid[i]
-        local sx1 = src.x
-        local sy1 = src.y
-        local sx2 = src.x + src.w
-        local sy2 = src.y + src.h
-        if sx1 <= x1 + EPS and sx2 >= x2 - EPS and sy1 <= y1 + EPS and sy2 >= y2 - EPS then
-          if src.name and src.name ~= "" then return src.name end
-        end
-      end
-      return "CUSTOM"
-    end
-
-    local xCells = table.getn(xs) - 1
-    local yCells = table.getn(ys) - 1
-    if xCells <= 0 or yCells <= 0 then
-      return cloneValid(valid)
-    end
-
-    local components = {}
-    local visited = {}
-    for yIndex = 1, yCells do
-      local row = filled[yIndex]
-      if row then
-        for xIndex = 1, xCells do
-          if row[xIndex] then
-            local vrow = visited[yIndex]
-            if not vrow or not vrow[xIndex] then
-              local queueX, queueY = {}, {}
-              local head, tail = 1, 1
-              queueX[1], queueY[1] = xIndex, yIndex
-              if not vrow then vrow = {}; visited[yIndex] = vrow end
-              vrow[xIndex] = true
-              local component = {
-                cells = {},
-                cellCount = 0,
-                minX = xIndex,
-                maxX = xIndex,
-                minY = yIndex,
-                maxY = yIndex
-              }
-              while head <= tail do
-                local cx = queueX[head]
-                local cy = queueY[head]
-                head = head + 1
-                component.cellCount = component.cellCount + 1
-                component.cells[component.cellCount] = { x = cx, y = cy }
-                if cx < component.minX then component.minX = cx end
-                if cx > component.maxX then component.maxX = cx end
-                if cy < component.minY then component.minY = cy end
-                if cy > component.maxY then component.maxY = cy end
-
-                local function enqueue(nx, ny)
-                  if nx < 1 or nx > xCells or ny < 1 or ny > yCells then return end
-                  local frow = filled[ny]
-                  if not (frow and frow[nx]) then return end
-                  local vny = visited[ny]
-                  if not vny then vny = {}; visited[ny] = vny end
-                  if vny[nx] then return end
-                  tail = tail + 1
-                  queueX[tail], queueY[tail] = nx, ny
-                  vny[nx] = true
-                end
-
-                enqueue(cx - 1, cy)
-                enqueue(cx + 1, cy)
-                enqueue(cx, cy - 1)
-                enqueue(cx, cy + 1)
-              end
-              table.insert(components, component)
+          -- LOGIC 1: ATTEMPT TO MERGE VERTICALLY
+          -- Condition: Perfectly aligned horizontally (same x and width)
+          if nearlyEqual(r1.x, r2.x) and nearlyEqual(r1.w, r2.w) then
+            -- Condition: Touching or overlapping vertically
+            if (r1.y <= r2.y + r2.h + EPS) and (r1.y + r1.h >= r2.y - EPS) then
+              local newY = math.min(r1.y, r2.y)
+              r1.h = math.max(r1.y + r1.h, r2.y + r2.h) - newY
+              r1.y = newY
+              merged = true
             end
           end
-        end
-      end
-    end
 
-    if table.getn(components) == 0 then
-      return cloneValid(valid)
-    end
-
-    local function growRect(component, mask, startX, startY)
-      local row = mask[startY]
-      if not row or not row[startX] then return nil end
-      local width = 0
-      local xIndex = startX
-      while row[xIndex] do
-        width = width + 1
-        xIndex = xIndex + 1
-      end
-      local bestWidth = width
-      local bestHeight = 1
-      local bestArea = width
-      local minWidth = width
-      local height = 1
-      local yIndex = startY + 1
-      while yIndex <= component.maxY do
-        local crow = mask[yIndex]
-        if not crow then break end
-        local rowWidth = 0
-        local xx = startX
-        while crow[xx] do
-          rowWidth = rowWidth + 1
-          xx = xx + 1
-        end
-        if rowWidth == 0 then break end
-        if rowWidth < minWidth then minWidth = rowWidth end
-        height = height + 1
-        local area = minWidth * height
-        if area > bestArea or (area == bestArea and (minWidth > bestWidth or height > bestHeight)) then
-          bestArea = area
-          bestWidth = minWidth
-          bestHeight = height
-        end
-        if minWidth == 0 then break end
-        yIndex = yIndex + 1
-      end
-      return {
-        x1Index = startX,
-        x2Index = startX + bestWidth,
-        y1Index = startY,
-        y2Index = startY + bestHeight
-      }
-    end
-
-    local combined = {}
-
-    for ci = 1, table.getn(components) do
-      local component = components[ci]
-      local mask = {}
-      for i = 1, component.cellCount do
-        local cell = component.cells[i]
-        local row = mask[cell.y]
-        if not row then row = {}; mask[cell.y] = row end
-        row[cell.x] = true
-      end
-
-      local function findStart()
-        for yIndex = component.minY, component.maxY do
-          local row = mask[yIndex]
-          if row then
-            for xIndex = component.minX, component.maxX do
-              if row[xIndex] then
-                return xIndex, yIndex
-              end
+          -- LOGIC 2: ATTEMPT TO MERGE HORIZONTALLY (if vertical merge failed)
+          -- Condition: Perfectly aligned vertically (same y and height)
+          if not merged and nearlyEqual(r1.y, r2.y) and nearlyEqual(r1.h, r2.h) then
+            -- Condition: Touching or overlapping horizontally
+            if (r1.x <= r2.x + r2.w + EPS) and (r1.x + r1.w >= r2.x - EPS) then
+              local newX = math.min(r1.x, r2.x)
+              r1.w = math.max(r1.x + r1.w, r2.x + r2.w) - newX
+              r1.x = newX
+              merged = true
             end
           end
-        end
-        return nil, nil
-      end
 
-      while true do
-        local sx, sy = findStart()
-        if not sx then break end
-        local rectIdx = growRect(component, mask, sx, sy)
-        if not rectIdx then
-          mask[sy][sx] = nil
-        else
-          for yIndex = rectIdx.y1Index, rectIdx.y2Index - 1 do
-            local row = mask[yIndex]
-            if row then
-              for xIndex = rectIdx.x1Index, rectIdx.x2Index - 1 do
-                row[xIndex] = nil
-              end
-            end
+          if merged then
+            table.remove(rectList, j)
+            passMadeMerge = true
+            -- A merge occurred, break both inner loops to restart the main 'while' pass.
+            break
+          else
+            -- No merge, advance the inner loop counter.
+            j = j + 1
           end
-          local x1 = xs[rectIdx.x1Index]
-          local x2 = xs[rectIdx.x2Index]
-          local y1 = ys[rectIdx.y1Index]
-          local y2 = ys[rectIdx.y2Index]
-          local newRect = { x = x1, y = y1, w = x2 - x1, h = y2 - y1 }
-          local name = pickName(x1, y1, x2, y2)
-          newRect.name = name or "CUSTOM"
-          table.insert(combined, newRect)
         end
-      end
-    end
 
-    if table.getn(combined) == 0 then
-      return cloneValid(valid)
-    end
-
-    local function mergeRectList(list)
-      local changed = true
-      while changed do
-        changed = false
-        local n = table.getn(list)
-        if n <= 1 then break end
-        for i = 1, n - 1 do
-          local a = list[i]
-          if a then
-            for j = i + 1, n do
-              local b = list[j]
-              if b then
-                if nearlyEqual(a.y, b.y) and nearlyEqual(a.h, b.h) then
-                  if nearlyEqual(a.x + a.w, b.x) or nearlyEqual(b.x + b.w, a.x) then
-                    local x1 = math.min(a.x, b.x)
-                    local x2 = math.max(a.x + a.w, b.x + b.w)
-                    local mergedRect = { x = x1, y = a.y, w = x2 - x1, h = a.h }
-                    local name = pickName(x1, a.y, x2, a.y + a.h)
-                    mergedRect.name = name or a.name or b.name or "CUSTOM"
-                    list[i] = mergedRect
-                    list[j] = list[n]
-                    list[n] = nil
-                    changed = true
-                    break
-                  end
-                end
-                if nearlyEqual(a.x, b.x) and nearlyEqual(a.w, b.w) then
-                  if nearlyEqual(a.y + a.h, b.y) or nearlyEqual(b.y + b.h, a.y) then
-                    local y1 = math.min(a.y, b.y)
-                    local y2 = math.max(a.y + a.h, b.y + b.h)
-                    local mergedRect = { x = a.x, y = y1, w = a.w, h = y2 - y1 }
-                    local name = pickName(a.x, y1, a.x + a.w, y2)
-                    mergedRect.name = name or a.name or b.name or "CUSTOM"
-                    list[i] = mergedRect
-                    list[j] = list[n]
-                    list[n] = nil
-                    changed = true
-                    break
-                  end
-                end
-              end
-            end
-          end
-          if changed then break end
+        if passMadeMerge then
+          -- This is the crucial part that replaces the 'goto'.
+          -- If the inner loop made a merge, we break this outer loop as well
+          -- to let the main 'while' loop start a fresh scan from i=1.
+          break
         end
+        i = i + 1
       end
     end
 
-    mergeRectList(combined)
-
-    table.sort(combined, function(a, b)
-      if not nearlyEqual(a.y, b.y) then
-        return a.y < b.y
-      end
-      if not nearlyEqual(a.x, b.x) then
-        return a.x < b.x
-      end
-      if not nearlyEqual(a.h, b.h) then
-        return a.h < b.h
-      end
-      return a.w < b.w
+    -- Optional: Sort final list for deterministic output.
+    table.sort(rectList, function(a, b)
+      if not nearlyEqual(a.y, b.y) then return a.y < b.y end
+      return a.x < b.x
     end)
 
-    return combined
+    return rectList
   end
   function Extras:CombineSessionHotspots(mapId)
     local targets = {}
@@ -1667,63 +1422,60 @@ local function TryInit()
     end
   end
 
-  -- Fill polygon into horizontal spans and vertically merge into rectangles
+  -- Fill polygon with a grid of square blocks
   function Extras:FillPolygonAsRects(points, step)
     local rects = {}
     if not points or table.getn(points) < 3 then return rects end
     step = step or 1.0
-    local function round1(v)
-      return math.floor(v * 10 + 0.5) / 10
-    end
-    -- compute polygon vertical bounds in zone coords (can be outside 0..100)
+
+    -- 1. Calculate the bounding box of the polygon.
+    local minX, maxX = points[1].x, points[1].x
     local minY, maxY = points[1].y, points[1].y
-    for i=2, table.getn(points) do
-      local y = points[i].y
-      if y < minY then minY = y end
-      if y > maxY then maxY = y end
+    for i = 2, table.getn(points) do
+      minX = math.min(minX, points[i].x)
+      maxX = math.max(maxX, points[i].x)
+      minY = math.min(minY, points[i].y)
+      maxY = math.max(maxY, points[i].y)
     end
 
-    local buckets = {} -- key -> last rect for a given [x1:x2]
+    -- 2. Iterate over the bounding box in a grid defined by the 'step' (PolyRes).
     local y = minY
-    while y <= maxY do
-      local xs = {}
-      -- gather intersections at scanline y (include low endpoint, exclude high to avoid double counting)
-      for i=1, table.getn(points) do
-        local p1 = points[i]
-        local p2 = points[i + 1] or points[1]
-        if p1.y ~= p2.y then
-          local ylow = p1.y < p2.y and p1.y or p2.y
-          local yhigh = p1.y > p2.y and p1.y or p2.y
-          if y >= ylow and y < yhigh then
-            local t = (y - p1.y) / (p2.y - p1.y)
-            local xi = p1.x + t * (p2.x - p1.x)
-            table.insert(xs, xi)
+    while y < maxY do
+      local x = minX
+      while x < maxX do
+        -- 3. For each block, check if its center point is inside the polygon.
+        -- We use the standard Ray Casting (even-odd) algorithm for this check.
+        local testX = x + (step / 2)
+        local testY = y + (step / 2)
+        local intersections = 0
+
+        for i = 1, table.getn(points) do
+          local p1 = points[i]
+          local p2 = points[i + 1]
+          if not p2 then p2 = points[1] end -- Ensure the polygon closes by connecting the last point to the first.
+
+          -- Check if the horizontal ray from the test point intersects this polygon edge.
+          -- This checks if the test point's Y is between the edge's start and end Y.
+          if (p1.y > testY) ~= (p2.y > testY) then
+            -- Calculate the X-coordinate of the intersection point.
+            local intersectX = (p2.x - p1.x) * (testY - p1.y) / (p2.y - p1.y) + p1.x
+            -- If the intersection is to the right of our test point, we count it.
+            if testX < intersectX then
+              intersections = intersections + 1
+            end
           end
         end
-      end
-      table.sort(xs)
-      local i = 1
-      while i <= table.getn(xs) - 1 do
-        local x1 = xs[i]
-        local x2 = xs[i+1]
-        if x2 > x1 then
-          local rx1 = round1(x1)
-          local rx2 = round1(x2)
-          local ry = round1(y)
-          local key = tostring(rx1) .. ":" .. tostring(rx2)
-          local rec = buckets[key]
-          if rec and math.abs((rec.y + rec.h) - ry) < 0.0001 then
-            rec.h = rec.h + step
-          else
-            local nr = { x = rx1, y = ry, w = rx2 - rx1, h = step, name = "CUSTOM" }
-            table.insert(rects, nr)
-            buckets[key] = nr
-          end
+
+        -- 4. If the number of intersections is odd, the point is inside. Create a block.
+        if (intersections / 2) ~= math.floor(intersections / 2) then
+          table.insert(rects, { x = x, y = y, w = step, h = step, name = "CUSTOM" })
         end
-        i = i + 2
+
+        x = x + step
       end
       y = y + step
     end
+
     return rects
   end
 
