@@ -89,12 +89,15 @@ local function TryInit()
     if not mapId then return end
     local suppress = opts and opts.suppressOverlay
     local force = opts and opts.force
-    local mapFrame, overlayFrame, wasMapVisible, wasOverlayVisible
+    local mapFrame, overlayFrame, worldMapFrame
+    local wasMapVisible, wasOverlayVisible, wasWorldMapVisible
     if suppress then
       mapFrame = GM.frame
       overlayFrame = GM.Overlay and GM.Overlay.frame
+      worldMapFrame = _G.WorldMapFrame
       wasMapVisible = mapFrame and mapFrame:IsVisible()
       wasOverlayVisible = overlayFrame and overlayFrame:IsVisible()
+      wasWorldMapVisible = worldMapFrame and worldMapFrame:IsVisible()
     end
     local Map = GM.Map
     local current = self:GetSelectedMapId() or (Map and Map.mapId)
@@ -122,6 +125,9 @@ local function TryInit()
     if suppress then
       if mapFrame and not wasMapVisible and mapFrame:IsVisible() then mapFrame:Hide() end
       if overlayFrame and not wasOverlayVisible and overlayFrame:IsVisible() then overlayFrame:Hide() end
+      if worldMapFrame and not wasWorldMapVisible and worldMapFrame:IsVisible() then
+        if isFunc(_G.HideUIPanel) then _G.HideUIPanel(worldMapFrame) else worldMapFrame:Hide() end
+      end
     end
   end
 
